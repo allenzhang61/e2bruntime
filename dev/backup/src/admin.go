@@ -40,6 +40,10 @@ func (w *worker) adminHandler() http.Handler {
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if r.URL.Path == "/settings" {
+			w.adminSettings(rw, r)
+			return
+		}
 		if r.URL.Path == "/schedule" {
 			w.adminSchedule(rw, r)
 			return

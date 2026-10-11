@@ -306,6 +306,10 @@ func (s *server) inventory(ctx context.Context) (inventory, error) {
 				continue
 			}
 			schedule := schedules[i.Runtime]
+			if schedule.Status == "disabled" {
+				i.BackupState = "disabled"
+				continue
+			}
 			if schedule.Status == "stopped" {
 				i.BackupState = "stopped"
 				continue

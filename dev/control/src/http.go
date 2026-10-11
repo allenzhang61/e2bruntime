@@ -52,6 +52,7 @@ func (s *server) handler() *gin.Engine {
 		c.HTML(http.StatusOK, "backups.html", gin.H{"ActiveTab": "backups", "Refresh": true})
 	})
 	router.GET("/api/backups", s.listBackupServices)
+	router.POST("/api/backups/config", s.configureBackupService)
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	router.GET("/", func(c *gin.Context) {
 		view := c.Query("view")

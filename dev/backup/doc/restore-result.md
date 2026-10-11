@@ -30,7 +30,7 @@ Go 端到端测试：[restore_test.go](restore_test.go)，导入实现：[restor
 
 ```bash
 ssh zyl@192.168.1.211 'cd /home/zyl/e2bruntime/deploy/two-vm && vagrant destroy -f runtime2 && vagrant up runtime2 --provider=libvirt'
-./dev/backup/restore.sh
+./dev/backup/scripts/restore.sh
 ```
 
 第一条会删除 runtime2 全部数据，只在明确重建该开发 VM 时执行。恢复脚本只安装/测试 runtime2；不触碰 runtime1，S3 操作只有列表和下载。结果写入 guest `/opt/e2b-runtime/restore-result.json`、宿主 `/home/zyl/e2bruntime/dev/backup/restore-result.json` 和本地忽略的 `dev/backup/out/runtime2-restore.json`。

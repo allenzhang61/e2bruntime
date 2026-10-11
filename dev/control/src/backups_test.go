@@ -38,3 +38,41 @@ func TestBackupServicesPartialFailureAndRedaction(t *testing.T) {
 		t.Fatal("leaked non-allowlisted fields")
 	}
 }
+
+func TestConfigureBackupServiceForwardsOnlyValidatedSettings(t *testing.T) {
+	calls := 0
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "POST" || r.URL.Path != "/settings" || r.Header.Get("X-API-Key") != "secret" {
+			t.Error("invalid upstream request")
+		}
+		var body map[string]int
+		if json.NewDecoder(r.Body).Decode(&body) != nil || len(body) != 2 || body["keep"] != 7 || body["interval_seconds"] != 180 {
+			t.Error("unexpected settings payload")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"keep":7,"interval_seconds":180}`))
+	}))
+	defer node.Close()
+	s := server{cfg: config{Runtimes: []runtimeConfig{{Name: "runtime2", Admin: node.URL, Key: "secret"}}}, http: http.DefaultClient}
+	router := s.handler()
+	for _, tc := range []struct {
+		body string
+		code int
+	}{
+		{`{"runtime":"runtime2","interval_seconds":180,"keep":7}`, 200},
+		{`{"runtime":"runtime2","interval_seconds":1,"keep":7}`, 400},
+		{`{"runtime":"unknown","interval_seconds":180,"keep":7}`, 400},
+	} {
+		r := httptest.NewRequest("POST", "http://localhost:13021/api/backups/config", strings.NewReader(tc.body))
+		r.Header.Set("X-Control-Request", "1")
+		out := httptest.NewRecorder()
+		router.ServeHTTP(out, r)
+		if out.Code != tc.code {
+			t.Fatal(out.Code, out.Body.String())
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("invalid settings forwarded: %d calls", calls)
+	}
+}

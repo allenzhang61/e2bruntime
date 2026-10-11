@@ -23,8 +23,8 @@ HOST
 "$here/two-vm/build.sh" build
 "$here/two-vm/build.sh" install
 "$here/rustfs/deploy.sh" up
-BACKUP_SEED_DEMO=0 "$here/../backup/deploy.sh" up
-"$here/../admin/deploy.sh"
+BACKUP_SEED_DEMO=0 "$here/../backup/scripts/deploy.sh" up
+"$here/../control/scripts/web-deploy.sh"
 "$here/../control/scripts/deploy.sh"
 "$here/../control/scripts/connect.sh"
 "$here/two-vm/deploy.sh" verify

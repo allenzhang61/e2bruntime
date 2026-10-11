@@ -10,6 +10,7 @@ import (
 )
 
 type backupSettings struct {
+	Enabled         bool   `json:"enabled"`
 	Node            string `json:"node"`
 	IntervalSeconds int64  `json:"interval_seconds"`
 	Keep            int    `json:"keep"`
@@ -57,6 +58,11 @@ func (w *worker) adminSchedule(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "GET required", 405)
 		return
 	}
+	cfg, err := loadBackupSettings(w.cfg)
+	if err != nil {
+		http.Error(rw, "backup settings unavailable", 500)
+		return
+	}
 	state := backupSchedule{Status: "stopped"}
 	raw, err := os.ReadFile(w.schedulePath())
 	if err == nil {
@@ -66,8 +72,12 @@ func (w *worker) adminSchedule(rw http.ResponseWriter, r *http.Request) {
 	} else if !os.IsNotExist(err) {
 		state.Status = "unknown"
 	}
+	if cfg.BackupDisabled && state.Status != "cycling" {
+		state.Status = "disabled"
+		state.Next = time.Time{}
+	}
 	state.Process = 0
-	settings := backupSettings{Node: w.cfg.Node, IntervalSeconds: int64(w.cfg.Interval / time.Second), Keep: w.cfg.Keep, Bucket: w.cfg.Bucket, Kind: "filesystem", ArchivePath: "backups/<Logic ID>/" + w.cfg.Node + "/<Instance ID>/filesystem/"}
+	settings := backupSettings{Enabled: !cfg.BackupDisabled, Node: cfg.Node, IntervalSeconds: int64(cfg.Interval / time.Second), Keep: cfg.Keep, Bucket: w.cfg.Bucket, Kind: "filesystem", ArchivePath: "backups/<Logic ID>/" + w.cfg.Node + "/<Instance ID>/filesystem/"}
 	response := struct {
 		backupSchedule
 		Config backupSettings `json:"config"`

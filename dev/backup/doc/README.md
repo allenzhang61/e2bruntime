@@ -8,13 +8,28 @@
 
 对象路径：`backups/<runtime>/<sandboxID>/filesystem/<UTC时间>-<buildID>.tar.gz`。归档成功或失败后都会尝试删除此次临时快照模板，源沙箱继续运行。服务当前用于本地 file:// V3 存储，归档与其共享基础层还需兼容 Runtime 和模板登记流程才能跨节点恢复；此服务不实现自动故障接管。共享基础层目前保留，不做引用计数垃圾回收。每个沙箱最多保留 10 个快照归档，bucket 还会有基础层对象。恢复时先下载依赖清单中的基础层，再叠加该归档；不能只下载一个增量归档。原有 Research exporter 位于 `src/e2bembed/export.go`，本目录导出代码是其独立移植。
 
+## 目录结构
+
+```text
+dev/backup/
+├── src/                # Go 服务、命令及测试代码
+├── scripts/            # 部署、安装、运行及验证脚本
+├── doc/                # 使用说明和历史验证报告
+├── out/                # 本地验证生成的数据
+├── go.mod / go.sum     # 独立 Go module
+├── config.env.example  # 配置示例
+└── service             # systemd 单元定义
+```
+
+在 `dev/backup` 下构建使用 `GOWORK=off go build -o /tmp/e2b-backup ./src`；测试使用 `GOWORK=off go test -short -race ./...`。脚本会自行定位 module 根目录，可从任意工作目录调用。VM 中的安装路径仍是 `/opt/e2b-runtime/backup`。
+
 ## 配置与部署
 
 ```bash
-./dev/backup/deploy.sh up
-./dev/backup/deploy.sh status
-./dev/backup/deploy.sh logs
-./dev/backup/deploy.sh stop
+./dev/backup/scripts/deploy.sh up
+./dev/backup/scripts/deploy.sh status
+./dev/backup/scripts/deploy.sh logs
+./dev/backup/scripts/deploy.sh stop
 ```
 
 `up` 交叉编译 Go 服务并安装到 runtime1/runtime2；使用现有 RustFS 配置，各创建一个 metadata `purpose=periodic-backup-demo` 的演示沙箱。重复执行复用正在运行的演示沙箱。它们每 30 秒向 `/home/user/backup-demo.log` 追加 UTC 时间；每轮备份将这两个沙箱的 TTL 续到 30 分钟。其他沙箱只备份，不修改生命周期。服务正常运行时演示沙箱持续运行；服务停止或长期故障后会按 TTL 到期，不是永久禁用超时。
@@ -105,7 +120,7 @@ TestHibernateLive（HIBERNATE_LIVE=1，VM 本地现有环境变量）在独立�
 在 Mac 项目根目录运行：
 
 ```bash
-./dev/backup/flow.sh
+./dev/backup/scripts/flow.sh
 ```
 
 脚本编译并在 runtime1 执行 Go 测试 TestSandboxFlowLive，不改 runtime2 或周期任务配置：创建独立沙箱、写入唯一文件并 sync、等待三分钟、确认存在周期任务产生的备份、通过 hibernate 执行最终备份并休眠、检查 paused 状态及新增 S3 归档、下载所有该沙箱归档与父层校验、connect 唤醒并逐字比较文件内容、删除沙箱并检查 404。失败也会尝试删除本次沙箱。S3 备份保留供查看；不会删除其他沙箱对象。
@@ -136,3 +151,9 @@ JSON 包含 schema_version、来源节点、原 sandbox ID、snapshot/build ID�
 ### Logic ID 备份目录
 
 新增归档及独立 Metadata 使用 `backups/<workspace-xxxxxx>/<Runtime>/<Instance ID>/filesystem/`；同一 Logic ID 恢复到其他 Runtime 后仍在同一个 workspace 目录下。共享基础层使用 `backups/_shared/<Runtime>/layers/<buildID>.tar.gz`，同 Runtime 的不同 Logic ID 复用相同 build ID。旧备份引用的旧目录基础层仍保留并兼容恢复；不删除仍被引用的文件。worker 与 Control 共用 `control/workspaces.json` 的条件写入注册表。列表、导入和依赖下载兼容旧目录，历史对象不会自动搬迁；当前目录仍保留最近 10 组归档与 Metadata。
+
+### 动态备份配置
+
+Control 的备份状态页可分别修改 Runtime 的备份间隔（10–86400 秒）和每实例保留数量（1–1000）。节点将配置原子保存到 `backup/settings.json`（0600），优先于环境变量；服务重启后仍生效。运行中的备份完成后采用新配置，空闲时约 1 秒内重新计算调度时间，修改配置不会启动已停止的服务。减少保留数量将在后续成功备份时清理旧备份，不清理共享依赖层。
+
+命令索引：在仓库根目录执行 `make -C dev/backup help`，或在该目录执行 `make help`。每个目标列出用途并调用原有脚本。

@@ -11,3 +11,5 @@
 - 13021 健康检查正常，13001/13011 Web Admin 均 HTTP 200，Mac 转发已重连并使用新 VM 地址。
 
 重建入口：`bash dev/deploy/reset.sh --all-data`。RustFS 访问配置保留，Runtime API key 重新生成并同步给相关服务；不输出凭据。最终宿主磁盘约剩余 29 GiB。旧基准测试 VM 和其他宿主项目不在本次环境重建范围内。
+
+命令索引：在仓库根目录执行 `make -C dev/deploy help`，或在该目录执行 `make help`。每个目标列出用途并调用原有脚本。

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$here/.." && pwd)
 remote=${RUNTIME_SSH_HOST:-zyl@192.168.1.211}
 work=/home/zyl/e2bruntime/dev/backup
 case "${1:-up}" in
  up)
-  (cd "$here" && GOWORK=off GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/e2b-backup .)
+  (cd "$root" && GOWORK=off GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/e2b-backup ./src)
   ssh "$remote" "mkdir -p '$work'"
-  scp -q /tmp/e2b-backup "$here/run.sh" "$here/service" "$here/config.env.example" "$here/install-guest.sh" "$here/install-host.sh" "$remote:$work/"
+  scp -q /tmp/e2b-backup "$here/run.sh" "$root/service" "$root/config.env.example" "$here/install-guest.sh" "$here/install-host.sh" "$remote:$work/"
   ssh "$remote" "BACKUP_SEED_DEMO=${BACKUP_SEED_DEMO:-1} bash '$work/install-host.sh' '$work'"
   ;;
  status|logs|stop)

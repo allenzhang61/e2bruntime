@@ -1,6 +1,6 @@
 # Logic Control
 
-Go source and tests live in `src/`, alongside the embedded `index.html`. Shell scripts live in `scripts/`, and Markdown documentation lives in `doc/`; module files, Dockerfile and configuration remain in `dev/control/`. Build from this directory with `GOWORK=off GOTOOLCHAIN=local go build -o /tmp/e2b-logic-control ./src`.
+Go source and tests live in `src/`, alongside the embedded `index.html`. Shell scripts live in `scripts/`, and Markdown documentation lives in `doc/`; Runtime Web Admin patches and its systemd unit live in `assets/web/`; module files, Dockerfile and configuration remain in `dev/control/`. Build from this directory with `GOWORK=off GOTOOLCHAIN=local go build -o /tmp/e2b-logic-control ./src`.
 
 Standalone Gin HTTP service deployed as `e2b-logic-control` on the 211 Docker daemon.
 Mac URL: http://localhost:13021 (SSH forward required).
@@ -16,7 +16,7 @@ Switch only updates the S3 ownership JSON with an ETag conditional write; it doe
 
 Configuration examples are in `config.env.example`; `configInit` centralizes every environment variable. Runtime API keys and RustFS AK/SK stay in `/opt/e2b-control/control.env` (root-only) on 211; none enter HTML/JSON. Service binds loopback and is accessed through SSH, not exposed to the LAN. Rootless container uses a read-only root filesystem and persistent Docker volume `e2b-control-data` for jobs. Losing the volume loses operation history; S3 still supplies backup and ownership inventory.
 
-`bash dev/control/scripts/deploy.sh` cross-compiles on Mac, configures persistent private SSH forwards from host to each VM, and builds/runs the Docker service on 211. `dev/admin/deploy.sh` separately updates Runtime Web Admin and its node-local backup API. UI embeds the original Mac Web Admin URLs; existing SSH forwards are required. Dashboard authentication uses the server-only deployment mode described below.
+`bash dev/control/scripts/deploy.sh` cross-compiles on Mac, configures persistent private SSH forwards from host to each VM, and builds/runs the Docker service on 211. `bash dev/control/scripts/web-deploy.sh` updates Runtime Web Admin and its node-local backup API; see [Runtime Web Admin](web-admin.md). UI embeds the original Mac Web Admin URLs; existing SSH forwards are required. Dashboard authentication uses the server-only deployment mode described below.
 
 HTTP routes and the loopback/Origin middleware are registered in `src/http.go`; asynchronous restore and job persistence remain in `src/main.go`.
 
@@ -52,7 +52,7 @@ the target team, allowing restoration on a previous source Runtime as well.
 
 `/debug` 提供 Runtime 1/2 选择、操作选择、JSON 参数编辑及结果/耗时展示；统一视图提供入口。`GET /api/debug/actions` 返回示例参数；`POST /api/debug/{action}` 接收 `runtime` 和对应参数。支持 list、create、get、delete、command、write-file、read-file、filesystem-snapshot、delete-snapshot、hibernate、wake、timeout。列表返回 `next_token`，可将其放入下一次 list 请求。
 
-客户端实现位于 `src/clientgo/client.go` 与 `command.go`，由原 dev/test 迁入；原端到端测试通过本地 module replace 共享它。Control 不再依赖测试模块。
+客户端实现位于 `src/clientgo/client.go` 与 `command.go`，由原 dev/test 迁入；新的统一视图端到端测试位于 `test/`，通过 Control HTTP API 覆盖实际部署链路；Control 不依赖原测试模块。
 
 `elapsed_ms` 是 Control 处理调用的耗时，页面另显示浏览器往返耗时。Debug 只调用预配置 Runtime，沿用 loopback/Origin 中间件，拒绝 URL/key 等额外字段，屏蔽返回的访问凭据。guest 文件/命令请求通过 211 私有 SSH 代理端口 14013/14023；新增 `RUNTIME1_PROXY_URL`、`RUNTIME2_PROXY_URL` 配置。
 
@@ -91,3 +91,5 @@ Control 在数据卷 instance-plans.json 原子持久化两个独立时间，每
 ### 页面刷新
 
 统一视图、备份状态、关联实例与备份镜像列表默认每 5 秒刷新，提供暂停、5/10/30/60 秒选择和倒计时提示。每个页面的选择保存在浏览器 localStorage；暂停后仍可手动刷新。刷新请求串行执行，完成后再等待所选间隔。Runtime Debug 不自动执行 API 操作，嵌入的 Runtime Web Admin 使用其自身刷新策略。
+
+命令索引：在仓库根目录执行 `make -C dev/control help`，或在该目录执行 `make help`。每个目标列出用途并调用原有脚本。

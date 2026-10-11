@@ -68,18 +68,42 @@ func main() {
 	log.Printf("backup worker node=%s interval=%s keep=%d kind=filesystem", c.Node, c.Interval, c.Keep)
 	// A single sequential loop prevents overlapping snapshots and retention races.
 	defer os.Remove(w.schedulePath())
-	next := time.Now().Add(c.Interval)
-	ticker := time.NewTicker(c.Interval)
+	lastCycle := time.Now()
+	next := lastCycle.Add(w.cfg.Interval)
+	if !w.cfg.BackupDisabled {
+		w.cycleScheduled(ctx, next)
+	}
+	w.publishSchedule(backupSchedule{Status: "waiting", Next: next})
+	// Re-read atomic settings without restarting the service or interrupting a backup.
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		w.cycleScheduled(ctx, next)
-		w.publishSchedule(backupSchedule{Status: "waiting", Next: next})
 		select {
 		case <-ctx.Done():
 			return
-		case tick := <-ticker.C:
-			next = tick.Add(c.Interval)
+		case <-ticker.C:
 		}
+		updated, err := loadBackupSettings(w.cfg)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		wasDisabled := w.cfg.BackupDisabled
+		w.cfg = updated
+		if w.cfg.BackupDisabled {
+			w.publishSchedule(backupSchedule{Status: "disabled"})
+			continue
+		}
+		if wasDisabled {
+			lastCycle = time.Now().Add(-w.cfg.Interval)
+		}
+		next = lastCycle.Add(w.cfg.Interval)
+		if !time.Now().Before(next) {
+			lastCycle = time.Now()
+			next = lastCycle.Add(w.cfg.Interval)
+			w.cycleScheduled(ctx, next)
+		}
+		w.publishSchedule(backupSchedule{Status: "waiting", Next: next})
 	}
 }
 func (w *worker) cycle(ctx context.Context) { w.cycleScheduled(ctx, time.Time{}) }
@@ -94,6 +118,10 @@ func (w *worker) cycleScheduled(ctx context.Context, next time.Time) {
 		return
 	}
 	for _, sb := range sbs {
+		cfg, err := loadBackupSettings(w.cfg)
+		if err != nil || cfg.BackupDisabled {
+			return
+		}
 		if ctx.Err() != nil {
 			return
 		}

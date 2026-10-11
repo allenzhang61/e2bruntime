@@ -11,4 +11,4 @@
 
 周期任务使用全局两分钟时钟；本次自动备份出现在创建后约 84 秒，不保证每次都在创建后的第 120 秒。三分钟流程可能产生一或两份自动备份，再加最终备份。原始 JSON：`out/flow-result.json`。
 
-在项目根目录复现：`./dev/backup/flow.sh`。流程逻辑见 `flow_test.go`，依赖环境变量集中在 `flowConfigInit` 和 `configInit`；完整说明见 README。
+在项目根目录复现：`./dev/backup/scripts/flow.sh`。流程逻辑见 `../src/flow_test.go`，依赖环境变量集中在 `flowConfigInit` 和 `configInit`；完整说明见 [README](README.md)。

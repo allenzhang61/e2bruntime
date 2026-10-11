@@ -9,6 +9,7 @@ import (
 )
 
 type config struct {
+	BackupDisabled                                                   bool
 	API, Proxy, Key, Storage, Node, Endpoint, AK, SK, Bucket, Region string
 	Interval                                                         time.Duration
 	Keep                                                             int
@@ -42,7 +43,7 @@ func configInit() (config, error) {
 	if c.Key == "" || c.Endpoint == "" || c.AK == "" || c.SK == "" || c.Bucket == "" || c.Node == "" || strings.ContainsAny(c.Node, "/\\.") {
 		return c, fmt.Errorf("API key, S3 configuration and safe BACKUP_NODE required")
 	}
-	return c, nil
+	return loadBackupSettings(c)
 }
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {
