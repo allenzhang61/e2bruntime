@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 work=$1
+# These installers share guest staging paths and mutate the same Runtime services.
+# Fail before uploading to guests so concurrent deployments cannot replace inputs.
+exec 9>/home/zyl/e2bruntime/deploy/.runtime-deploy.lock
+if ! flock -n 9; then
+ echo 'Another Runtime deployment is running (source, backup or Web Admin). Retry after it finishes.' >&2
+ exit 1
+fi
 vm_dir=${RUNTIME_REMOTE_DIR:-/home/zyl/e2bruntime/deploy/two-vm}
 s3_env=${RUSTFS_ENV_FILE:-/home/zyl/e2bruntime/dev/deploy/rustfs/.env}
 cfg=$(mktemp)

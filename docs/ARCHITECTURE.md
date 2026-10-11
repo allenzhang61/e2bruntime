@@ -920,7 +920,13 @@ flowchart TB
 
 The two-VM development deployment can build native API, migrator and orchestrator
 artifacts using `dev/deploy/two-vm/build.sh`. It keeps the pinned container images
-and mounts the fork binaries with a Compose override. The orchestrator launcher
+and mounts the fork binaries with a Compose override. Development source, backup and Web Admin host installers share
+`/home/zyl/e2bruntime/deploy/.runtime-deploy.lock` and reject concurrent installation
+before guest uploads, protecting shared staging files and Compose operations. VM
+provisioning, runtime-up and rollback remain sequential operator actions outside this lock.
+The development source build invokes Go directly and embeds the local HEAD commit
+and the uploaded database migration timestamp; uncommitted working-tree changes
+are included in the source bundle. The orchestrator launcher
 uses `ORCHESTRATOR_BINARY` (default `/var/lib/e2b/bin/orchestrator`) inside the host
 namespaces; source builds point at `/opt/e2b-runtime/custom/orchestrator`.
 

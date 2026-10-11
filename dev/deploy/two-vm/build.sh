@@ -10,11 +10,13 @@ vm_dir=${RUNTIME_REMOTE_DIR:-/home/zyl/e2bruntime/deploy/two-vm}
 [[ $work =~ ^/[a-zA-Z0-9_./-]+$ && $vm_dir =~ ^/[a-zA-Z0-9_./-]+$ ]] || exit 2
 case "${1:-build}" in
  build)
+  commit=$(git -C "$repo" rev-parse --short=12 HEAD)
+  [[ $commit =~ ^[0-9a-f]+$ ]] || exit 2
   ssh "$remote" "mkdir -p '$work/src' '$work/out'"
   COPYFILE_DISABLE=1 tar --no-xattrs --exclude='.env*' --exclude=bin --exclude=.git -C "$repo" -cf - packages go.work go.work.sum |
     ssh "$remote" "tar -C '$work/src' -xf -"
   scp -q "$here/compile.sh" "$remote:$work/compile.sh"
-  ssh "$remote" "sudo -n docker run --rm --memory 4g --cpus 4 -e GOMAXPROCS=2 -e GOGC=60 -e GOMEMLIMIT=3GiB -v '$work/src:/src' -v '$work/out:/out' -v '$work/compile.sh:/compile.sh:ro' -v e2bruntime-go-mod:/go/pkg/mod -v e2bruntime-go-cache:/root/.cache/go-build -w /src golang:1.26.8-bookworm bash /compile.sh"
+  ssh "$remote" "sudo -n docker run --rm --memory 4g --cpus 4 -e COMMIT_SHA='$commit' -e GOMAXPROCS=2 -e GOGC=60 -e GOMEMLIMIT=3GiB -v '$work/src:/src' -v '$work/out:/out' -v '$work/compile.sh:/compile.sh:ro' -v e2bruntime-go-mod:/go/pkg/mod -v e2bruntime-go-cache:/root/.cache/go-build -w /src golang:1.26.8-bookworm bash /compile.sh"
   ;;
  install)
   scp -q "$here/install.sh" "$here/install-vm.sh" "$here/runtime.sh" "$repo/embed/compose/scripts/orchestrator-launch.sh" "$remote:$work/"

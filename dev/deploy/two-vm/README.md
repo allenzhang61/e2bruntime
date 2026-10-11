@@ -78,18 +78,23 @@ sudo cat /opt/e2b-runtime/sdk.env
 
 Vagrant 2.4.9、vagrant-libvirt 0.12.2；guest Docker Engine 29.9.0、Compose 5.6.0。旧 `two-vm_vm1` / `two-vm_vm2` 保留且仍关闭。两台新 VM 部署后宿主根磁盘剩余约 43 GiB，后续构建大量模板/快照前需留意容量。
 
-Go 的创建/写文件/读回校验/删除测试见 [dev/test](../../test/README.md)，可在 Mac 上自动建立 SSH 隧道访问这两套 Runtime。
+Go 的创建、文件读写、快照和休眠唤醒测试见 [Control](../../control/doc/README.md)。先部署 Control 并执行 `make -C dev/control connect`，再运行 `make -C dev/control debug-test`。
 
 ## 部署此 fork 的文件系统快照能力
 
 ```bash
 ./dev/deploy/two-vm/build.sh build
 ./dev/deploy/two-vm/build.sh install
-cd dev/test
-GOWORK=off go test -v -count=1 -timeout=5m
+make -C dev/deploy smoke
+# 完整 Control/备份服务部署后：
+make -C dev/control connect
+make -C dev/control debug-test
+make -C dev/control e2e
 ```
 
-`build` 将源码（不含 `.env` 凭据文件）传到 211，在受 CPU/内存限制的 Go 1.26.8 Bookworm 容器内原生编译 API、db-migrator 和 orchestrator，并执行相关开关/节点单元测试。源码及产物位于 `/home/zyl/e2bruntime/dev/build`；Go 构建缓存保存在专用 Docker volumes，避免每次重新下载。
+`build` 将源码（不含 `.env` 凭据文件）传到 211，在受 CPU/内存限制的 Go 1.26.8 Bookworm 容器内原生编译 API、db-migrator 和 orchestrator，并执行相关开关/节点单元测试。开发构建直接调用 Go，显式传入本地 HEAD commit 和同源迁移版本，不依赖远端 Git 或环境选择文件。源码及产物位于 `/home/zyl/e2bruntime/dev/build`；Go 构建缓存保存在专用 Docker volumes，避免每次重新下载。
+
+源码安装、备份安装和 Web Admin 部署共享宿主安装锁；并发操作会在上传 guest 文件前明确失败，应等待当前部署结束后重试。
 
 `install` 只处理 `runtime1`、`runtime2`。先将数据库备份到 guest root-only `/opt/e2b-runtime/backups/pre-source-<UTC时间>.sql`，运行同源迁移，再用 `/opt/e2b-runtime/compose.dev.yaml` 挂载 fork 二进制和 launcher；公开镜像、基础模板和数据卷保留。替换 orchestrator 会终止当时运行中的沙箱，应在开发测试之间部署。两服务都设置 `FILESYSTEM_ONLY_CHECKPOINT=true`，默认部署入口仍为官方 pinned artifacts。
 
@@ -97,7 +102,7 @@ GOWORK=off go test -v -count=1 -timeout=5m
 
 `FILESYSTEM_ONLY_CHECKPOINT` 只启用 `memory:false` 文件系统快照：源 VM 继续运行，从快照创建的 VM 冷启动。它不实现周期调度、跨节点导入或 RustFS 上传。
 
-源码安装和文件系统快照验证已在两台 VM 完成（2026-10-10）。完整 Go E2E 测试通过，包含源沙箱持续运行、文件快照隔离和恢复冷启动断言；单次耗时见 [测试结果](../../test/README.md)。容器列表仍显示固定基础镜像标签，实际 API/orchestrator 使用 override 中挂载的 fork 二进制。
+源码安装和文件系统快照验证已在两台 VM 完成（2026-10-10）。完整 Go E2E 测试通过，包含源沙箱持续运行、文件快照隔离和恢复冷启动断言；单次耗时见 [端到端测试](../../control/doc/e2e.md)。容器列表仍显示固定基础镜像标签，实际 API/orchestrator 使用 override 中挂载的 fork 二进制。
 
 ## 全量重建
 
