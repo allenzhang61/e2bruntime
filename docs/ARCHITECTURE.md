@@ -1109,3 +1109,5 @@ Control's /logics/:logic_id/instances diagnostic page uses the complete inventor
 The main Control table links to /logics/:logic_id/backups from Logic ID actions instead of embedding backup files in a table column. The diagnostic page reuses the inventory API and lists per-Logic-ID archives, metadata sidecars, sizes and actual shared dependencies sorted by backup time.
 
 Control list pages share an embedded refresh-controls template: default five-second polling, per-path browser interval preference (pause/5/10/30/60 seconds), countdown and manual refresh. Polling waits for a previous UI refresh to finish before scheduling the next interval; Debug mutations are never periodically replayed and iframe Dashboard polling remains independent.
+
+Control overview, Runtime iframe views, Debug and backup status share one Gin HTML header partial with five route-based tabs and current-page highlighting. Runtime tabs use the validated view query on the overview route; Debug keeps manual-only operations.

@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-//go:embed index.html debug.html backups.html logic_instances.html logic_backups.html refresh.html
+//go:embed index.html debug.html backups.html logic_instances.html logic_backups.html refresh.html header.html
 var pages embed.FS
 
 type job struct {

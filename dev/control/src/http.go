@@ -35,7 +35,7 @@ func bindJSON(c *gin.Context, target any, maxBytes int64, message string) bool {
 // handler registers native Gin routes while keeping the loopback-only access policy.
 func (s *server) handler() *gin.Engine {
 	router := gin.New()
-	router.SetHTMLTemplate(template.Must(template.ParseFS(pages, "index.html", "debug.html", "backups.html", "logic_instances.html", "logic_backups.html", "refresh.html")))
+	router.SetHTMLTemplate(template.Must(template.ParseFS(pages, "index.html", "debug.html", "backups.html", "logic_instances.html", "logic_backups.html", "refresh.html", "header.html")))
 	router.RedirectTrailingSlash = false
 	router.RedirectFixedPath = false
 	// The controller is reached directly through SSH, not through a trusted HTTP proxy.
@@ -47,11 +47,24 @@ func (s *server) handler() *gin.Engine {
 	router.NoRoute(func(c *gin.Context) { apiError(c, http.StatusNotFound, "not found") })
 	router.GET("/api/debug/actions", func(c *gin.Context) { c.JSON(http.StatusOK, debugActions) })
 	router.POST("/api/debug/:action", s.debugOperation)
-	router.GET("/debug", func(c *gin.Context) { c.HTML(http.StatusOK, "debug.html", nil) })
-	router.GET("/backups", func(c *gin.Context) { c.HTML(http.StatusOK, "backups.html", nil) })
+	router.GET("/debug", func(c *gin.Context) { c.HTML(http.StatusOK, "debug.html", gin.H{"ActiveTab": "debug"}) })
+	router.GET("/backups", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "backups.html", gin.H{"ActiveTab": "backups", "Refresh": true})
+	})
 	router.GET("/api/backups", s.listBackupServices)
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	router.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+	router.GET("/", func(c *gin.Context) {
+		view := c.Query("view")
+		if view != "" && view != "runtime1" && view != "runtime2" {
+			apiError(c, http.StatusBadRequest, "unknown Runtime view")
+			return
+		}
+		active := view
+		if active == "" {
+			active = "overview"
+		}
+		c.HTML(http.StatusOK, "index.html", gin.H{"ActiveTab": active, "View": view, "Refresh": view == ""})
+	})
 	router.GET("/api/logics", s.listLogics)
 	router.GET("/logics/:logic_id/instances", func(c *gin.Context) {
 		id := c.Param("logic_id")

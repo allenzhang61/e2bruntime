@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Runtime Debug</title>
 <style>body{font:14px system-ui;background:#101319;color:#e5e9ef;max-width:1100px;margin:28px auto;padding:0 20px}a{color:#9bc7ff}select,button,textarea{background:#243146;color:white;border:1px solid #53627a;border-radius:5px;padding:10px}textarea{display:block;width:100%;box-sizing:border-box;height:260px;font:14px monospace;margin:14px 0}button{cursor:pointer}button:disabled{opacity:.4}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#19202c;padding:16px;border-radius:6px}label{margin-right:18px}.muted{color:#a8b5c9}</style>
-<h1>Runtime Debug</h1><p><a href="/">← 统一视图</a></p><p class="muted">直接操作所选 Runtime。创建、删除、写文件、执行命令等会修改沙箱；文件系统快照保持源实例运行。休眠保存进程/内存，但此入口不执行额外的 S3 备份。</p>
+{{template "control-header" .}}<h2>Runtime Debug</h2><p class="muted">直接操作所选 Runtime。创建、删除、写文件、执行命令等会修改沙箱；文件系统快照保持源实例运行。休眠保存进程/内存，但此入口不执行额外的 S3 备份。</p>
 <label>Runtime <select id="runtime"><option value="runtime1">Runtime 1</option><option value="runtime2">Runtime 2</option></select></label><label>操作 <select id="action"></select></label>
 <p>请求参数（JSON）。将示例 Instance ID 替换为实际 ID；创建或查询后可从结果复制。</p><p id="action-help" class="muted"></p><textarea id="payload" aria-label="请求参数"></textarea><button id="run">执行</button><p id="status" role="status"></p><pre id="result">执行结果及调用耗时将在这里显示。</pre>
 <script>

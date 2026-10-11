@@ -18,6 +18,10 @@ func TestHTTPRoutingAndAccess(t *testing.T) {
 	}{
 		{name: "health", method: "GET", path: "/health", wantBody: `"status":"ok"`, status: 200},
 		{name: "page", method: "GET", path: "/", wantBody: "<html", status: 200},
+		{name: "runtime view", method: "GET", path: "/?view=runtime2", wantBody: `data-view="runtime2"`, status: 200},
+		{name: "unknown runtime view", method: "GET", path: "/?view=other", wantBody: "unknown Runtime view", status: 400},
+		{name: "debug tab", method: "GET", path: "/debug", wantBody: `href="/debug" aria-current="page"`, status: 200},
+		{name: "backup tab", method: "GET", path: "/backups", wantBody: `href="/backups" aria-current="page"`, status: 200},
 		{name: "empty jobs", method: "GET", path: "/api/jobs", wantBody: "[]", status: 200},
 		{name: "foreign host", method: "GET", path: "/health", host: "remote.example", status: 403},
 		{name: "missing origin and CLI header", method: "POST", path: "/api/switch", body: "{}", status: 403},

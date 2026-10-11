@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>备份状态</title>
 <style>body{font:14px system-ui;background:#101319;color:#e5e9ef;margin:28px}h1{font-size:23px}a{color:#9bc7ff}button{background:#243146;color:white;border:1px solid #53627a;border-radius:5px;padding:8px;cursor:pointer}nav{display:flex;gap:18px;align-items:center;margin:18px 0}.muted{color:#a8b5c9}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;text-align:left;border-bottom:1px solid #354052;vertical-align:top}td p{margin:0 0 5px;line-height:1.4}code{overflow-wrap:anywhere}.status{font-weight:600}.running{color:#96dfb2}.stopped{color:#ffc98a}.error{color:#ffaaaa}</style>
-<h1>备份状态</h1><nav><a href="/">← 统一视图</a><a href="/debug">Runtime Debug</a><button id="refresh">刷新</button>{{template "refresh-controls" .}}<a href="/api/backups" target="_blank" rel="noopener">JSON API</a></nav>
+{{template "control-header" .}}<h2>备份状态</h2>
 <p class="muted">备份进程在各 Runtime 上独立运行；只备份运行中且有备份权限的实例。服务运行不代表每次备份都成功。</p><p id="checked"></p><p id="error" class="error" role="alert"></p>
 <div class="table-wrap"><table><thead><tr><th>Runtime</th><th>任务状态</th><th>备份配置</th><th>备份目录</th><th>当前进度</th><th>下次备份</th></tr></thead><tbody id="rows"></tbody></table></div>
 <script>
