@@ -13,6 +13,8 @@
 set -euo pipefail
 
 OL_CGROUP_ROOT="${OL_CGROUP_ROOT:-/sys/fs/cgroup/e2b}"
+# Native source builds may live outside the released-artifact cache.
+ORCHESTRATOR_BINARY="${ORCHESTRATOR_BINARY:-/var/lib/e2b/bin/orchestrator}"
 
 log() { echo "orchestrator-launch: $*"; }
 
@@ -37,7 +39,7 @@ if [ -n "${OL_COMMAND:-}" ]; then
 else
   set -- nsenter -t 1 -m -u -i -n -C -w/ -- \
     /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    /var/lib/e2b/bin/orchestrator
+    "$ORCHESTRATOR_BINARY"
 fi
 
 # The trap is installed before the child starts so a SIGTERM arriving in the

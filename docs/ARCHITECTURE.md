@@ -741,7 +741,11 @@ sequenceDiagram
   rootfs and no memfile, resumes the same Firecracker process, and produces a template whose
   sandboxes cold-boot; the source keeps running. Routed by its own flag,
   `filesystem-only-checkpoint`, independent of `in-place-checkpoint` (no memory is exported, so
-  the sync-WP tracking, the Firecracker release gate and the balloon gate play no part). The
+  the sync-WP tracking, the Firecracker release gate and the balloon gate play no part).
+  Self-hosted API and orchestrator builds can set `FILESYSTEM_ONLY_CHECKPOINT=true`
+  to enable that flag's fallback without LaunchDarkly (default false, read at process startup).
+  `embed/compose` passes the setting to both services; existing released images need
+  a version containing this fallback or a source build.
   API refuses it before the sandbox leaves Running when the flag is off for the team (400,
   `snapshot_filesystem_only_disabled`) or when the sandbox's node runs an orchestrator
   release below the one that reads the request field (409,
@@ -862,6 +866,12 @@ deletion owns a separate hold until artifact cleanup returns.
 
 ## Deployment topology
 
+Development-only S3: [`dev/deploy/rustfs`](../dev/deploy/rustfs/README.md) starts
+a temporary RustFS container on the physical Vagrant host (S3 :19000, console
+:19001), initializes `runtime-snapshots`, and validates it with the Go AWS SDK.
+Its object storage is ephemeral tmpfs and it shares the VMs' failure domain;
+it is not yet wired into Runtime template/checkpoint storage or HA recovery.
+
 The services are scheduler-agnostic binaries and containers; the supported way to run them is the
 Kubernetes-based distribution. The roles below hold regardless of how the nodes are provisioned.
 E2B Embed (`embed/`) runs the same containers on one machine, the web dashboard included — with
@@ -908,6 +918,12 @@ flowchart TB
   flag's fallback where LaunchDarkly has no value). Once reads are on ClickHouse, Loki can be left
   out of a deployment and the api started without `LOKI_URL`.
 
+The two-VM development deployment can build native API, migrator and orchestrator
+artifacts using `dev/deploy/two-vm/build.sh`. It keeps the pinned container images
+and mounts the fork binaries with a Compose override. The orchestrator launcher
+uses `ORCHESTRATOR_BINARY` (default `/var/lib/e2b/bin/orchestrator`) inside the host
+namespaces; source builds point at `/opt/e2b-runtime/custom/orchestrator`.
+
 ## Repository layout
 
 ```
@@ -932,3 +948,164 @@ embed/                  E2B Embed: the whole stack on one machine (Compose, Terr
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
 `packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
 Run `make generate` after changing any of them.
+
+### Self-hosted development periodic filesystem backup
+
+`dev/backup` is a separate Go/systemd worker deployable on each of the two development
+Runtime VMs. Currently only runtime1 is enabled; runtime2 was disabled and its S3
+backup prefix removed at the user's request. It lists the team's running sandboxes through the public API, requests
+`memory:false` snapshot templates immediately at startup and every `BACKUP_INTERVAL`
+(default 2 minutes), resolves the ready build, and exports the local V3 rootfs layers
+into a gzip tar archive. Immutable parent layers are stored once under
+`backups/{node}/layers/{buildID}.tar.gz`; each incremental archive records its external
+parent archive dependencies. Shared parent objects are retained outside snapshot pruning,
+so removing an old snapshot cannot break a newer one. It uploads incremental snapshots to
+RustFS/S3 under `backups/{node}/{sandbox}/filesystem/`, checks HEAD size/metadata,
+and keeps the newest `BACKUP_KEEP` objects (default 10) per sandbox, deleting older
+archives only after a new upload succeeds. Temporary snapshot templates are cleaned
+through the API. Existing local storage and Runtime's upload protocol remain unchanged.
+
+There is one sequential worker per node; it backs up only its configured team's
+running sandboxes. Only explicitly marked demo sandboxes have TTL renewed to 30 minutes.
+The worker reports sizes, SHA-256 and stage timings to journald. S3 archives omit
+memory/process state and do not include control-plane database registration or implement
+cross-node recovery. The current development RustFS is temporary host tmpfs storage and
+shares the physical failure domain with both VMs; it is not persistent HA storage.
+
+`dev/backup/restore.go` and the opt-in `TestRestoreLatestLive` validate S3 filesystem
+recovery on a newly created runtime2 VM. The importer downloads the latest selected
+runtime1 archive and recursively resolves external parent archives, verifies archive
+and per-file hashes, then stages UUID-scoped rootfs files in target local storage.
+The development test registers an authorized target template/build via a PostgreSQL
+transaction using the matching default base resource configuration, then cold-boots
+through the public API and checks the captured file. This is manual filesystem
+recovery, not process/memory restoration or automated failover. Arbitrary resource
+specifications still require original control-plane configuration in the backup;
+the current test is specifically for matching default-base demo sandboxes.
+
+### Development: final filesystem backup before explicit hibernation
+
+`dev/backup` provides a node-local `hibernate SANDBOX_ID` CLI. It obtains guest access credentials via connect and extends TTL to at least ten minutes, flushes guest filesystem buffers, creates and exports a filesystem checkpoint, uploads it to S3 and downloads it to verify SHA-256 and size, applies retention, then calls the native `pause(memory:true)` endpoint. The periodic worker and CLI serialize through a node-wide flock. Backup failures prevent the CLI from requesting pause. Callers must persist application state, quiesce writers and ensure sufficient TTL; sync alone does not persist application memory. This opt-in flow does not intercept native pause or timeout-triggered pause. S3 still holds filesystem-only recovery artifacts; memory state remains in the Runtime's native hibernation storage. It does not implement automatic cross-node failover.
+
+The optional `dev/backup/flow.sh` runs `TestSandboxFlowLive` in runtime1 against the active periodic worker: create a disposable sandbox with a persisted marker, wait three minutes, require at least one automatic backup, final-backup-and-hibernate, verify S3 archives and dependencies, wake and compare file contents, then delete the sandbox. Reports and S3 archives are retained. The worker uses a global two-minute cycle, so the test does not require exactly two objects or align the cycle to creation.
+
+### Development: Dashboard S3 snapshot inventory
+
+`dev/admin/dashboard.patch` extends the official Dashboard v0.2.1 (commit f031ba7ec20910d5b09582d6531d7d220cf30c7f): the instance table has an S3 Snapshots count linking to `/snapshots/{sandboxId}`, with backup timestamp, filesystem type, bytes and S3 object key in newest-first order. Counts and lists refresh every 15 seconds. These count retained filesystem archives only, excluding shared layers and Runtime-local memory/hibernation state.
+
+The Dashboard server's `/api/backups` route reads its existing httpOnly team-key session and proxies to `e2b-backup admin` on VM loopback port 3012. The node-local service accepts only the configured team's exact key and reads only its node's S3 prefix. RustFS keys stay in the existing root-only backup configuration; they are never sent to the browser. The inventory endpoints are read-only; the explicitly requested takeover/import endpoints now mutate ownership, local build storage and target control-plane registration as described below. This development setup is scoped to runtime1 and its existing single-team backup worker. `dev/admin/deploy.sh` builds the patched frontend and installs the query service; `compose.dashboard.yaml` selects the local image and is included by `runtime.sh`. The Runtime API and sandboxes are unaffected by Dashboard image replacement.
+
+### Development: versioned backup Metadata sidecars
+
+Every new filesystem backup and final-backup-before-hibernation now saves a separate `<timestamp>-<build>.metadata.json` beside its `.tar.gz` in the same sandbox prefix. Configuration is read before and after snapshot creation; observed changes prevent publication. JSON is uploaded and downloaded for verification before the archive, binds archive key/SHA-256/bytes and external parent archives, and records the sandbox's available configuration without access tokens. The pair is marked complete only after both uploads verify; errors attempt rollback. Retention counts archives, deletes the matching JSON and retries orphan JSON cleanup. This is not an atomic S3 transaction; recovery must verify both objects and dependencies.
+
+Unavailable creation-only settings and identity information are explicitly declared in `missing_fields`; credential-bearing network transforms/proxy settings are omitted. This adds recovery information but does not yet make arbitrary sandbox restoration or automatic failover complete. Historical archives remain usable without sidecars. New archives do not embed sandbox-config.json; the importer retains compatibility with the short-lived earlier embedded format.
+
+The backup list associates each archive with its separate Metadata object and byte count. A `/snapshots/{sandboxId}/metadata?archiveKey=...` page reads formatted JSON via the existing authenticated `/api/backups` proxy and the node-local `/metadata` endpoint. The service validates the configured node/sandbox prefix, timestamp/build filename, JSON size/hash and archive binding before responding. Historical archives without sidecars are labeled as such; sidecars never increase snapshot counts.
+
+### Development: portable inventory, ownership and filesystem import
+
+Dashboard adds read-only export and paste/import pages. Export returns a JSON Array of each instance's newest retained archive, including backups of deleted instances; instances without backups are absent. Entries bind the configured bucket, source node, archive and verified separate recovery Metadata. Credentials are never exported. The target reads only its own configured S3 endpoint/bucket and allowed source node list.
+
+`control/backup-owners/{logicalNode}/{logicalSandbox}.json` records the sole backup owner Runtime/physical instance, generation and import state. Workers auto-create original ownership with If-None-Match, fail closed when ownership is absent/unreadable for imported instances or belongs elsewhere, and check generation before upload and before publication. The import page displays ownership and offers an explicit takeover via If-Match/If-None-Match CAS. Export never changes ownership and the source need not be alive for takeover. Import independently rejects non-owned objects; it transitions owned ready records to importing and binds the restored instance before activating its backup permission. Source lineage travels in reserved sandbox metadata fields.
+
+This is cooperative application fencing, not S3 IAM revocation or fencing of guest application writes: an old in-flight upload may temporarily reach S3 and is rolled back on the post-upload generation check; older binaries/shared credentials can bypass it. Takeover does not stop an old guest. Production failover needs compute/network fencing and separate least-privilege credentials. There is no expiring lease or automatic takeover.
+
+Imports run sequentially as persisted jobs with per-archive creation records to avoid duplicate sandbox creation after retries/lost responses. Recovery verifies S3 archive/file hashes and dependencies, checks native filesystem-only metadata and compatible target base kernel/Firecracker/envd/disk, stages immutable layers, registers a private template to the authenticated target team and cold-boots through Runtime API. CPU/RAM and available metadata/network/lifecycle settings are reused; external mounts and omitted network policies are rejected. Missing creation-only environment/identity/startup settings are displayed, not reconstructed. New sandbox IDs and an initial 30-minute TTL are returned. Incomplete creation records require inspection rather than automatic duplicate creation. This targets the local Compose deployment, not arbitrary cloud Runtime control planes.
+
+Both development VMs run the backup admin service on loopback 3012. The clean rebuild enables periodic workers on both nodes; either worker can be explicitly stopped for a test. RustFS credentials are authorized in root-only configs. Mac tunnels use 127.0.0.1:13001/13002 for runtime1 Dashboard/proxy and localhost:13011 for runtime2 Dashboard (proxy at 127.0.0.1:13012). Distinct localhost/127.0.0.1 cookie hosts preserve both team sessions. The Dashboard proxy authenticates the existing team cookie and checks Origin for POST operations. Import job state stays in root-only `BACKUP_IMPORT_JOBS`; no access tokens are returned to the browser.
+
+Import job responses distinguish historical outcome from live `current_state`
+(`running`, `paused`, `missing`, `unknown`). Read-only API probes never wake a
+sandbox; 404 marks it missing and auth/network failures remain unknown. Dashboard
+refreshes completed history, disables links to absent/unverified instances and
+allows dismissing cached history. Reposting a completed job with an absent or
+unverified target returns 409 instead of reporting a new import success. The
+historical job and per-archive creation ledger remain intact for auditing and
+protection against accidental duplicate creation.
+
+### Development: standalone Logic Control
+
+`dev/control` contains module/configuration files and Dockerfile, with deployment/connect scripts in `dev/control/scripts`; its Gin HTTP server, tests and embedded HTML are in `dev/control/src`, built as `./src` from the control module root. It supersedes Dashboard export/import UI: those pages, buttons and
+Dashboard proxy route are removed; the authenticated node-local backup endpoints
+remain as internal execution APIs. A separate Go HTTP service on 211's Docker
+host uses loopback 13021, persistent private SSH API forwards and server-only
+Runtime team keys/S3 credentials. Mac accesses it through SSH at localhost:13021.
+The rootless container has a read-only filesystem and `e2b-control-data` job volume.
+
+Logic IDs use original node/instance lineage as a primary map key. The inventory
+reads verified separate S3 Metadata and ownership independently of source health,
+then overlays live running/paused instances from both Runtime APIs. Shared layer
+keys and byte sizes remain visible. `POST /api/switch` only updates the S3
+ownership JSON using If-Match/If-None-Match and increments the generation on a
+placement change; no instance is created and target availability is not required.
+`POST /api/restore` accepts only a Logic ID, reads its saved owner and records an
+asynchronous operation to import the latest complete filesystem snapshot there.
+Node-local preparation rejects a different owner and cannot take over placement.
+Success requires a live target API check. The target importer additionally checks logical uniqueness under the node
+flock, including paused instances; supported imports cannot duplicate a logical
+identity on one Runtime. Unmanaged direct sandbox creation can bypass this rule.
+
+The controller does not delete the source, restore memory/processes, route user
+sandbox traffic or perform automatic failover. Existing Runtime2 scheduled-backup
+state remains disabled. Dashboard views are embedded using the original Mac URLs
+and retain separate existing login sessions. Controller mutation endpoints reject
+foreign Origins. Keys stay in a root-only host config; the service is intentionally
+loopback-only behind SSH in this development environment.
+
+Explicit controller preparation checks target vacancy under flock and assigns a
+fresh ownership generation for a new lifecycle. Import job and creation ledger
+identity includes that generation; fresh recovery template identity also includes it so
+expired prior instances can be restored again without treating old success as
+new success. Ambiguous importing generations require inspection. Proven failures
+before any create API call mark ownership `failed_before_create` for safe retry.
+Dashboard CSP frame-ancestors permits only self and the two loopback controller
+origins. Current owner pointers are separately annotated with observed instance
+state, so expired owners never appear to be live sandboxes.
+
+On controller restart, an interrupted operation is reconciled against S3's
+active owner/pinned archive and the target API's logical identity and creation
+time. This updates observed completion without replaying any create call.
+
+Embedded Dashboard auth uses upstream's server-only E2B_API_KEY deployment mode
+via each VM's existing sdk.env. Its listener is narrowed to VM loopback; SSH
+forwards remain the access boundary. This avoids cross-site login cookies when
+embedding runtime1/2 and does not copy team keys to the browser.
+
+Host SSH forwards 14001/14011 reach each VM's loopback Dashboard; Mac 13001/13011
+now target those host forwards. `dev/control/scripts/connect.sh` keeps the controller,
+Dashboard and existing sandbox-proxy forwards together in a managed SSH session.
+When a target has previously registered the immutable snapshot build, the importer
+reuses its existing private team-owned template only when it is active. A soft-deleted snapshot template remains a tombstone: the importer registers a new private recovery env and assigns the verified team-owned immutable build to it. Creation pins the build UUID explicitly, preventing default-tag drift. Registration verification requires an active env and a ready build.
+
+### Clean development rebuild
+
+`dev/deploy/reset.sh --all-data` destroys only the current runtime1/runtime2 Vagrant guests, recreates RustFS (discarding its tmpfs objects), and deletes the controller data volume. It rebuilds fork binaries from the current checkout, reapplies the patched Dashboard, and reinstalls both backup workers and the controller. Deployment credentials remain configuration; guest API keys are newly generated. `BACKUP_SEED_DEMO=0` suppresses sample sandbox creation, leaving both node inventories empty. Mac proxy forwarding resolves the newly allocated Vagrant guest addresses. Older unrelated benchmark VMs are outside this reset.
+
+### Control Runtime Debug API
+
+The Gin controller serves `/debug`, `GET /api/debug/actions` and allowlisted `POST /api/debug/:action` routes for Runtime selection, lifecycle operations, file/command APIs and filesystem snapshots. All routes retain the existing loopback and Origin checks. The shared standard-library Runtime client moved from dev/test to `dev/control/src/clientgo`; dev/test now imports it via a local module replacement. Keys and guest tokens remain server-side and are removed from returned results. Host-to-VM systemd SSH tunnels also forward 14013/14023 to each guest's client proxy on 3002; configuration uses RUNTIME1_PROXY_URL/RUNTIME2_PROXY_URL. Debug calls report elapsed milliseconds. Hibernate and filesystem-snapshot debug calls use the Runtime APIs directly and do not invoke the S3 backup worker; the labels make this explicit.
+
+Control's HTTP layer uses Gin JSON binding and validator tags, rejects unknown JSON fields, renders embedded pages with Gin HTML templates, and returns consistent JSON error objects through AbortWithStatusJSON. The browser reads the error field. Existing per-route body limits, loopback/Origin guards, HTTP timeouts and graceful shutdown remain in effect.
+
+Public Control Logic IDs now use `workspace-` plus six random lowercase letters/digits, independent of Runtime placement. On first observation, Control persists a unique origin-to-name mapping in S3 `control/workspaces.json`, using If-Match/If-None-Match CAS for concurrency. Restored lineage resolves to the same name after controller restarts or source outages. Backup ownership keys retain their original internal lineage paths; legacy switch/job identities remain accepted for compatibility.
+
+Control additionally exposes `POST /api/instances/extend`: for a running instance on a configured Runtime, it reads endAt and adds 60–3600 seconds to the later of that deadline and now, calls the Runtime timeout API, and reads back the observed deadline. The UI uses a minutes dialog in the instance actions column. It preserves lifecycle.onTimeout (pause or kill), never wakes paused instances and does not alter S3 backup scheduling.
+
+Control inventory also queries running instances individually for endAt and lifecycle.onTimeout, since the list API omits lifecycle. The UI shows a live pause/kill countdown or an unknown policy, with paused instances explicitly marked paused; these lifecycle details are observed from Runtime rather than S3 backups.
+
+The periodic backup worker atomically publishes a local schedule.json beside import-jobs, recording its PID, ticker next-cycle timestamp, current instance and processed instances. The existing authenticated node admin exposes GET /schedule and checks the worker process is alive; Control queries each node and shows next-backup countdowns alongside instance expiry, filtered by active S3 backup ownership and running state. A cycle is sequential, so a due timestamp denotes scheduling rather than guaranteed snapshot completion. Stopped/unknown, paused, non-owned and in-progress cases are shown explicitly.
+
+Control now maintains independent one-shot sleep/delete plans by Runtime and physical instance in instance-plans.json on its persistent data volume. The Gin schedule endpoint changes only the selected plan and imports the other native expiry policy on first management. A serialized 10-second scheduler executes due deletion (including paused instances) before due memory pause, and requests 30-minute TTL renewal when remaining native TTL is below five minutes. Plans survive Control restarts and are not inherited by newly restored instance IDs. Cancellation does not affect the other plan. This is controller scheduling/renewal, not a Runtime unlimited-lifetime API: maximum platform lifetime and prolonged controller/upstream outages still constrain execution.
+
+New filesystem archives and their separate metadata sidecars use backups/<workspace-LogicID>/<Runtime>/<physicalInstanceID>/filesystem/<timestamp>-<buildID>.<tar.gz|metadata.json>. The backup worker shares Control's conditional-write workspace registry, so restoring on another Runtime preserves the workspace namespace. New immutable parent layers use backups/_shared/<Runtime>/layers/<buildID>.tar.gz, reusable across Logic IDs on that Runtime. Readers accept the older backups/<Runtime>/... layout; Dependency restoration accepts the archive's legacy workspace/source Runtime layers and the new shared namespace for that same source Runtime, with exact UUID keys and checksum validation. Retention applies to the current instance directory; old objects are not moved automatically.
+
+Control's read-only /backups page and Gin GET /api/backups query each node's authenticated /schedule endpoint concurrently. The node exposes an allowlisted configuration summary (node, interval, retention, bucket, filesystem archive path) even when its periodic worker is stopped. Control shows worker status, current instance, processed count and next cycle, distinguishing unavailable queries from stopped workers. Credentials are never included.
+
+The unified Control table consumes current_instances, an ownership-bound projection of observed instances. Switching to an owner without an instance yields awaiting_restore and no instance actions; an older still-running source is no longer presented as current. The API retains all instances observations for duplicate detection and safe restore checks. Before ownership registration, the original physical instance is displayed.
+
+Control's /logics/:logic_id/instances diagnostic page uses the complete inventory observations plus backup source IDs, original ID and ownership ID to show all related physical instances grouped by configured Runtime. It distinguishes observed state, unobserved historical IDs and unreachable Runtime queries, retaining the ownership-only current view on the main table.
+
+The main Control table links to /logics/:logic_id/backups from Logic ID actions instead of embedding backup files in a table column. The diagnostic page reuses the inventory API and lists per-Logic-ID archives, metadata sidecars, sizes and actual shared dependencies sorted by backup time.
+
+Control list pages share an embedded refresh-controls template: default five-second polling, per-path browser interval preference (pause/5/10/30/60 seconds), countdown and manual refresh. Polling waits for a previous UI refresh to finish before scheduling the next interval; Debug mutations are never periodically replayed and iframe Dashboard polling remains independent.

@@ -1,0 +1,18 @@
+{{define "refresh-controls"}}
+<style>.refresh-controls{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.refresh-controls select{background:#243146;color:white;border:1px solid #53627a;border-radius:5px;padding:8px}.refresh-hint{color:#a8b5c9;font-size:13px}</style>
+<span class="refresh-controls"><label for="refresh-interval">刷新间隔</label><select id="refresh-interval"><option value="0">暂停</option><option value="5" selected>5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option></select><span id="refresh-hint" class="refresh-hint" role="status"></span></span>
+<script>
+function initAutoRefresh(refresh){
+ const select=document.getElementById('refresh-interval'),hint=document.getElementById('refresh-hint'),button=document.getElementById('refresh');
+ const preference='control-refresh:'+location.pathname;const allowed=[0,5,10,30,60];
+ let interval=5,timer=null,next=0,busy=false;
+ try{const stored=localStorage.getItem(preference);if(stored!==null&&allowed.includes(Number(stored)))interval=Number(stored)}catch{}
+ select.value=String(interval);
+ function render(){hint.textContent=busy?'正在刷新…':interval===0?'自动刷新已暂停':('每 '+interval+' 秒自动刷新 · '+Math.max(0,Math.ceil((next-Date.now())/1000))+' 秒后刷新')}
+ function schedule(){clearTimeout(timer);next=interval?Date.now()+interval*1000:0;if(interval)timer=setTimeout(run,interval*1000);render()}
+ async function run(){if(busy)return;busy=true;clearTimeout(timer);button.disabled=true;render();try{await refresh()}finally{busy=false;button.disabled=false;schedule()}}
+ select.onchange=()=>{interval=Number(select.value);try{localStorage.setItem(preference,String(interval))}catch{}if(!busy)schedule();else render()};
+ button.onclick=run;setInterval(render,1000);run();
+}
+</script>
+{{end}}

@@ -10,3 +10,16 @@ go.work.sum
 /packages/fc-kernels
 /packages/fc-versions
 **/bin/
+
+# Local/remote Vagrant deployment state
+.vagrant/
+dev/deploy/two-vm/payload/
+
+# Go integration test output
+dev/test/out/
+
+# Public RustFS configuration example only
+!dev/deploy/rustfs/.env.example
+
+# S3 restore validation reports
+dev/backup/out/

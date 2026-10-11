@@ -1,0 +1,259 @@
+diff --git a/next.config.ts b/next.config.ts
+index b748851..ca45bac 100644
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -76,6 +76,10 @@ const config: NextConfig = {
+           key: 'X-Frame-Options',
+           value: 'SAMEORIGIN',
+         },
++        {
++          key: 'Content-Security-Policy',
++          value: "frame-ancestors 'self' http://localhost:13021 http://127.0.0.1:13021",
++        },
+       ],
+     },
+   ],
+diff --git a/src/app/(dashboard)/snapshots/[sandboxId]/metadata/page.tsx b/src/app/(dashboard)/snapshots/[sandboxId]/metadata/page.tsx
+new file mode 100644
+index 0000000..94254b5
+--- /dev/null
++++ b/src/app/(dashboard)/snapshots/[sandboxId]/metadata/page.tsx
+@@ -0,0 +1,12 @@
++import { notFound } from 'next/navigation'
++import { MetadataView } from '@/features/dashboard/snapshots/metadata-view'
++
++export default async function MetadataPage({ params, searchParams }: {
++  params: Promise<{ sandboxId: string }>
++  searchParams: Promise<{ archiveKey?: string }>
++}) {
++  const { sandboxId } = await params
++  const { archiveKey } = await searchParams
++  if (!/^[a-zA-Z0-9_-]+$/.test(sandboxId) || typeof archiveKey !== 'string' || !archiveKey) notFound()
++  return <MetadataView sandboxId={sandboxId} archiveKey={archiveKey} />
++}
+diff --git a/src/app/(dashboard)/snapshots/[sandboxId]/page.tsx b/src/app/(dashboard)/snapshots/[sandboxId]/page.tsx
+new file mode 100644
+index 0000000..e99fba3
+--- /dev/null
++++ b/src/app/(dashboard)/snapshots/[sandboxId]/page.tsx
+@@ -0,0 +1,7 @@
++import { notFound } from 'next/navigation'
++import { SnapshotList } from '@/features/dashboard/snapshots/snapshot-list'
++export default async function SnapshotsPage({ params }: { params: Promise<{ sandboxId: string }> }) {
++  const { sandboxId } = await params
++  if (!/^[a-zA-Z0-9_-]+$/.test(sandboxId)) notFound()
++  return <SnapshotList sandboxId={sandboxId} />
++}
+diff --git a/src/app/api/backups/route.ts b/src/app/api/backups/route.ts
+new file mode 100644
+index 0000000..b7e51ba
+--- /dev/null
++++ b/src/app/api/backups/route.ts
+@@ -0,0 +1,30 @@
++import { NextResponse } from 'next/server'
++import { getApiKey } from '@/core/server/auth'
++
++export async function GET(request: Request) {
++  const apiKey = await getApiKey()
++  if (!apiKey) return NextResponse.json({ error: 'Sign in required' }, { status: 401 })
++  const params = new URL(request.url).searchParams
++  const sandboxId = params.get('sandboxId')
++  const archiveKey = params.get('archiveKey')
++  if (archiveKey && !sandboxId) return NextResponse.json({ error: 'Instance ID required' }, { status: 400 })
++  if (sandboxId && !/^[a-zA-Z0-9_-]+$/.test(sandboxId)) {
++    return NextResponse.json({ error: 'Invalid instance ID' }, { status: 400 })
++  }
++  const endpoint = process.env.E2B_BACKUP_API_URL || 'http://127.0.0.1:3012'
++  const url = new URL(archiveKey ? '/metadata' : '/snapshots', endpoint)
++  if (sandboxId) url.searchParams.set('sandboxId', sandboxId)
++  if (archiveKey) url.searchParams.set('archiveKey', archiveKey)
++  try {
++    const response = await fetch(url, {
++      headers: { 'X-API-Key': apiKey }, cache: 'no-store',
++      signal: AbortSignal.timeout(20000),
++    })
++    if (!response.ok) {
++      return NextResponse.json({ error: response.status === 401 ? 'Not authorized for this backup store' : response.status === 404 ? 'No Metadata for this backup' : 'Snapshot storage unavailable' }, { status: response.status })
++    }
++    return NextResponse.json(await response.json(), { headers: { 'Cache-Control': 'no-store' } })
++  } catch {
++    return NextResponse.json({ error: 'Snapshot storage unavailable' }, { status: 502 })
++  }
++}
+diff --git a/src/features/dashboard/sandboxes/list/table-config.tsx b/src/features/dashboard/sandboxes/list/table-config.tsx
+index 7e6160b..48804e1 100644
+--- a/src/features/dashboard/sandboxes/list/table-config.tsx
++++ b/src/features/dashboard/sandboxes/list/table-config.tsx
+@@ -8,6 +8,7 @@ import type { DateRange } from 'react-day-picker'
+ import type { Sandbox } from '@/core/modules/sandboxes/models'
+ import { getTimestampColumnSize } from '@/features/dashboard/common/timestamp-column'
+ import { useTimezone } from '@/features/dashboard/timezone'
++import { SnapshotCountCell } from '@/features/dashboard/snapshots/snapshot-count-cell'
+ 
+ import {
+   CpuUsageCell,
+@@ -131,6 +132,16 @@ export const sandboxListColumns: ColumnDef<SandboxListRow>[] = [
+     enableSorting: false,
+     enableGlobalFilter: true,
+   },
++  {
++    id: 'snapshots',
++    header: 'S3 Snapshots',
++    cell: SnapshotCountCell,
++    size: 120,
++    enableSorting: false,
++    enableResizing: false,
++    enableColumnFilter: false,
++    enableGlobalFilter: false,
++  },
+   {
+     accessorKey: 'state',
+     id: 'state',
+diff --git a/src/features/dashboard/sandboxes/list/table-row.tsx b/src/features/dashboard/sandboxes/list/table-row.tsx
+index 12de437..0a1db39 100644
+--- a/src/features/dashboard/sandboxes/list/table-row.tsx
++++ b/src/features/dashboard/sandboxes/list/table-row.tsx
+@@ -1,5 +1,5 @@
+ import { flexRender, type Row } from '@tanstack/react-table'
+-import Link from 'next/link'
++import { useRouter } from 'next/navigation'
+ import { memo } from 'react'
+ import { PROTECTED_URLS } from '@/configs/urls'
+ import { DataTableCell, DataTableRow } from '@/ui/data-table'
+@@ -12,13 +12,19 @@ interface SandboxesTableRowProps {
+ export const SandboxesTableRow = memo(function SandboxesTableRow({
+   row,
+ }: SandboxesTableRowProps) {
++  const router = useRouter()
++  const href = PROTECTED_URLS.SANDBOX(row.original.sandboxID)
+   return (
+-    <Link
+-      href={PROTECTED_URLS.SANDBOX(row.original.sandboxID)}
+-      prefetch={false}
+-      passHref
+-    >
+       <DataTableRow
++        role="link"
++        tabIndex={0}
++        onClick={(event) => {
++          if ((event.target as HTMLElement).closest('a, button, input')) return
++          router.push(href)
++        }}
++        onKeyDown={(event) => {
++          if (event.target === event.currentTarget && event.key === 'Enter') router.push(href)
++        }}
+         className="h-8 cursor-pointer hover:bg-bg-1"
+         isSelected={row.getIsSelected()}
+       >
+@@ -28,6 +34,5 @@ export const SandboxesTableRow = memo(function SandboxesTableRow({
+           </DataTableCell>
+         ))}
+       </DataTableRow>
+-    </Link>
+   )
+ })
+diff --git a/src/features/dashboard/snapshots/metadata-view.tsx b/src/features/dashboard/snapshots/metadata-view.tsx
+new file mode 100644
+index 0000000..043f4e5
+--- /dev/null
++++ b/src/features/dashboard/snapshots/metadata-view.tsx
+@@ -0,0 +1,31 @@
++'use client'
++import { useQuery } from '@tanstack/react-query'
++import Link from 'next/link'
++import { Button } from '@/ui/primitives/button'
++
++type MetadataResponse = { metadataKey: string; metadata: Record<string, unknown> }
++export function MetadataView({ sandboxId, archiveKey }: { sandboxId: string; archiveKey: string }) {
++  const query = useQuery<MetadataResponse>({
++    queryKey: ['s3-backup-metadata', sandboxId, archiveKey],
++    queryFn: async () => {
++      const response = await fetch(`/api/backups?sandboxId=${encodeURIComponent(sandboxId)}&archiveKey=${encodeURIComponent(archiveKey)}`)
++      if (!response.ok) {
++        const body = await response.json().catch(() => ({}))
++        throw new Error(body.error || 'Unable to load Metadata')
++      }
++      return response.json()
++    }, retry: false,
++  })
++  return <div className="flex h-full flex-col gap-5 overflow-auto p-6">
++    <Link href={`/snapshots/${sandboxId}`} className="text-sm underline">← Backup list</Link>
++    <div className="flex items-center justify-between gap-4">
++      <div><h1 className="text-xl font-semibold">Backup Metadata</h1><p className="mt-2 font-mono text-sm">{sandboxId}</p></div>
++      <Button variant="secondary" onClick={() => query.refetch()} disabled={query.isFetching}>Refresh</Button>
++    </div>
++    <p className="text-sm text-fg-muted">Separate S3 JSON object for this filesystem backup.</p>
++    {query.isError ? <p role="alert">{query.error.message}</p> : !query.data ? <p>Loading Metadata…</p> : <>
++      <p className="break-all font-mono text-sm">{query.data.metadataKey}</p>
++      <pre className="overflow-x-auto rounded border border-stroke p-4 text-sm">{JSON.stringify(query.data.metadata, null, 2)}</pre>
++    </>}
++  </div>
++}
+diff --git a/src/features/dashboard/snapshots/snapshot-count-cell.tsx b/src/features/dashboard/snapshots/snapshot-count-cell.tsx
+new file mode 100644
+index 0000000..586672e
+--- /dev/null
++++ b/src/features/dashboard/snapshots/snapshot-count-cell.tsx
+@@ -0,0 +1,20 @@
++'use client'
++import { useQuery } from '@tanstack/react-query'
++import type { CellContext } from '@tanstack/react-table'
++import Link from 'next/link'
++import type { SandboxListRow } from '@/features/dashboard/sandboxes/list/table-config'
++
++export function SnapshotCountCell({ row }: CellContext<SandboxListRow, unknown>) {
++  const query = useQuery<{ counts: Record<string, number> }>({
++    queryKey: ['s3-snapshot-counts'],
++    queryFn: async () => {
++      const response = await fetch('/api/backups')
++      if (!response.ok) throw new Error('Snapshot storage unavailable')
++      return response.json()
++    }, staleTime: 10000, refetchInterval: 15000,
++  })
++  if (query.isError) return <span title="Snapshot storage unavailable">Unavailable</span>
++  if (!query.data) return <span aria-label="Loading snapshot count">…</span>
++  const count = query.data.counts[row.original.sandboxID] ?? 0
++  return <Link href={`/snapshots/${encodeURIComponent(row.original.sandboxID)}`} onClick={(event) => event.stopPropagation()} className="font-mono underline underline-offset-4" aria-label={`${count} snapshots for ${row.original.sandboxID}`}>{count}</Link>
++}
+diff --git a/src/features/dashboard/snapshots/snapshot-list.tsx b/src/features/dashboard/snapshots/snapshot-list.tsx
+new file mode 100644
+index 0000000..46b76eb
+--- /dev/null
++++ b/src/features/dashboard/snapshots/snapshot-list.tsx
+@@ -0,0 +1,36 @@
++'use client'
++import { useQuery } from '@tanstack/react-query'
++import Link from 'next/link'
++import { Button } from '@/ui/primitives/button'
++
++type Snapshot = { key: string; bytes: number; backupAt: string; storedAt: string; kind: string; metadataKey?: string; metadataBytes?: number }
++export function SnapshotList({ sandboxId }: { sandboxId: string }) {
++  const query = useQuery<{ snapshots: Snapshot[]; count: number; node: string }>({
++    queryKey: ['s3-snapshots', sandboxId],
++    queryFn: async () => {
++      const response = await fetch(`/api/backups?sandboxId=${encodeURIComponent(sandboxId)}`)
++      if (!response.ok) throw new Error('Unable to load snapshots. Check backup storage and access.')
++      return response.json()
++    }, refetchInterval: 15000,
++  })
++  return <div className="flex h-full flex-col gap-5 overflow-auto p-6">
++    <Link href="/sandboxes" className="text-sm underline">← Sandboxes</Link>
++    <div className="flex items-center justify-between gap-4">
++      <div><h1 className="text-xl font-semibold">Instance snapshots</h1><p className="mt-2 font-mono text-sm">{sandboxId}</p></div>
++      <Button variant="secondary" onClick={() => query.refetch()} disabled={query.isFetching}>Refresh</Button>
++    </div>
++    <p className="text-sm text-fg-muted">Filesystem backups retained in S3, newest first. Shared base layers and local hibernation state are excluded.</p>
++    {query.isError ? <p role="alert">{query.error.message}</p> : !query.data ? <p>Loading snapshots…</p> : <>
++      <p>{query.data.count} snapshots · {query.data.node}</p>
++      {query.data.count === 0 ? <p>No snapshots yet.</p> : <div className="overflow-x-auto rounded border border-stroke"><table className="w-full text-left text-sm">
++        <thead><tr className="border-b border-stroke"><th className="p-3">Backup time (UTC)</th><th className="p-3">Type</th><th className="p-3 text-right">Size (bytes)</th><th className="p-3">Object name</th><th className="p-3">Metadata</th></tr></thead>
++        <tbody>{query.data.snapshots.map((snapshot) => <tr key={snapshot.key} className="border-b border-stroke last:border-b-0">
++          <td className="whitespace-nowrap p-3 font-mono">{snapshot.backupAt.replace('T', ' ').replace('Z', '')}</td>
++          <td className="p-3">Filesystem</td><td className="p-3 text-right font-mono">{snapshot.bytes.toLocaleString()}</td>
++          <td className="p-3 font-mono break-all">{snapshot.key}</td>
++          <td className="whitespace-nowrap p-3">{snapshot.metadataKey ? <div className="flex flex-col gap-1"><Link className="underline" title={snapshot.metadataKey} href={`/snapshots/${sandboxId}/metadata?archiveKey=${encodeURIComponent(snapshot.key)}`}>View JSON</Link><span className="text-xs text-fg-muted">{snapshot.metadataBytes?.toLocaleString()} bytes</span></div> : <span className="text-fg-muted">无 Metadata</span>}</td>
++        </tr>)}</tbody>
++      </table></div>}
++    </>}
++  </div>
++}

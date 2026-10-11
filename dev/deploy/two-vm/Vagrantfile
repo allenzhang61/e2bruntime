@@ -1,0 +1,32 @@
+# Run on the Linux/KVM host, not directly on macOS.
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.box_version = "202508.03.0"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  %w[runtime1 runtime2].each_with_index do |name, index|
+    config.vm.define name do |vm|
+      vm.vm.hostname = "e2b-#{name}"
+      base_port = (index + 1) * 10000 + 3000
+      [3000, 3002].each do |guest_port|
+        vm.vm.network :forwarded_port, guest: guest_port,
+          host: base_port + guest_port - 3000, host_ip: "127.0.0.1",
+          auto_correct: false
+      end
+      vm.vm.provider :libvirt do |lv|
+        lv.default_prefix = "e2bruntime-ha"
+        lv.cpus = 4
+        lv.memory = 10240
+        lv.machine_virtual_size = 64
+        lv.cpu_mode = "host-passthrough"
+        lv.cpu_fallback = "forbid"
+        lv.nested = true
+      end
+      # deploy.sh stages these two files from the repository's official pins.
+      vm.vm.provision "file", source: "payload/compose.yaml", destination: "/tmp/runtime-compose.yaml"
+      vm.vm.provision "file", source: "payload/compose.env", destination: "/tmp/runtime-compose.env"
+      vm.vm.provision "file", source: "runtime.sh", destination: "/tmp/runtime.sh"
+      vm.vm.provision "shell", path: "provision.sh"
+    end
+  end
+end

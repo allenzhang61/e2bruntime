@@ -239,7 +239,8 @@ var (
 	// memory in-place path play no part. Off (the default) refuses the
 	// request before anything is touched; there is no memory fallback, since
 	// the caller asked for a template that cold-boots.
-	FilesystemOnlyCheckpointFlag = NewBoolFlag("filesystem-only-checkpoint", false)
+	// Self-hosted installs without LaunchDarkly can opt in on both API and node.
+	FilesystemOnlyCheckpointFlag = NewBoolFlag("filesystem-only-checkpoint", envBoolOr("FILESYSTEM_ONLY_CHECKPOINT", false))
 
 	// InPlaceCheckpointReportingFlag re-admits to the in-place checkpoint the
 	// sandboxes whose balloon runs free-page reporting, and those whose

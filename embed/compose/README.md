@@ -505,3 +505,23 @@ just built rather than the published ones. The reference's
 [Developing](../docs/REFERENCE.md#developing) covers `make lint`, `make test`,
 `make sync-configs` and `make stores-check`, all of which run from the package
 root.
+
+### Filesystem-only snapshots in self-hosted builds
+
+Set `FILESYSTEM_ONLY_CHECKPOINT=true` in `.env` and recreate the API and
+orchestrator **after building versions that contain this environment fallback**.
+The default remains false; the variable is read at process startup, and
+LaunchDarkly values still take precedence when configured. This opt-in does
+not enable a scheduler or change ordinary memory-inclusive snapshots. Older
+published images ignore the variable.
+
+`POST /sandboxes/{sandboxID}/snapshots` with `{"memory":false}` captures
+the native rootfs layers, resumes the same source VM, and returns a snapshot
+template ID. Creating a sandbox with that ID cold-boots it: files survive,
+but the source processes and memory are not restored. The format retains
+its rootfs dependency headers rather than making a Docker image or a flat
+copy of a running disk. Storage still follows `TEMPLATE_STORAGE_URL`;
+this setting alone does not upload/export snapshots to another S3 service.
+
+The fork's [two-VM source build guide](../../dev/deploy/two-vm/README.md)
+and [Go semantic tests](../../dev/test/README.md) cover deployment and recovery.

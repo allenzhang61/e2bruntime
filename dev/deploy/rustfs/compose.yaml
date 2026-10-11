@@ -1,0 +1,23 @@
+name: e2bruntime-s3
+services:
+  rustfs:
+    image: ${RUSTFS_IMAGE:-rustfs/rustfs:latest}
+    restart: "no"
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?Set access key}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set secret key}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_OBS_LOGGER_LEVEL: error
+      RUSTFS_OBS_LOG_DIRECTORY: /logs
+    ports:
+      - "${RUSTFS_BIND_IP:-192.168.1.211}:19000:9000"
+      - "${RUSTFS_BIND_IP:-192.168.1.211}:19001:9001"
+    tmpfs:
+      - /data:size=4294967296,uid=10001,gid=10001,mode=0755
+      - /logs:size=67108864,uid=10001,gid=10001,mode=0755
+    logging:
+      driver: none

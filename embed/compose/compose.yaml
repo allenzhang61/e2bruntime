@@ -282,6 +282,7 @@ services:
     cgroup: host
     privileged: true
     environment:
+      FILESYSTEM_ONLY_CHECKPOINT: ${FILESYSTEM_ONLY_CHECKPOINT:-false}
       ORCHESTRATOR_SERVICES: orchestrator,template-manager
       NODE_ID: orchestrator
       NODE_IP: 127.0.0.1
@@ -347,6 +348,7 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
+      FILESYSTEM_ONLY_CHECKPOINT: ${FILESYSTEM_ONLY_CHECKPOINT:-false}
       # Empty means the operator set neither: api-secrets generated a value
       # per install for each and the entrypoint below fills it in. A value in
       # .env or the shell arrives here and wins, one variable at a time. The

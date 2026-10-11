@@ -1,0 +1,12 @@
+[Unit]
+Description=E2B S3 snapshot inventory and import admin
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+ExecStart=/opt/e2b-runtime/backup/run.sh admin
+Restart=on-failure
+RestartSec=5
+UMask=0077
+[Install]
+WantedBy=multi-user.target
