@@ -10,7 +10,7 @@ import (
 )
 
 func TestHTTPRoutingAndAccess(t *testing.T) {
-	s := server{jobs: []job{}}
+	s := server{jobs: []job{}, cfg: config{Runtimes: []runtimeConfig{{Name: "runtime1"}, {Name: "runtime2"}}}}
 	router := s.handler()
 	for _, tc := range []struct {
 		name, method, path, host, origin, cli, body, wantBody string

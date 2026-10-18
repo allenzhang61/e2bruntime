@@ -866,6 +866,19 @@ deletion owns a separate hold until artifact cleanup returns.
 
 ## Deployment topology
 
+The optional `dev/deploy/single-host` deployment runs one Embed Runtime directly
+on an x86_64 Linux host, with a rootless Logic Control container and the existing
+backup worker/admin systemd services. Host-side Git checks out the requested revision;
+temporary Docker containers compile the services without receiving SSH credentials.
+Control accepts a configurable list of `runtimeN` nodes, with dynamic navigation.
+Loopback access remains the default; additional exact Host authorities and a LAN
+listener are explicit operator configuration, not authentication. POST requests
+retain same-origin checks. An optional Nginx Web Admin proxy uses configured
+`frame-ancestors` and retains Dashboard team-key login. Single-host component updates
+can rebuild Control without rebuilding or restarting the Runtime. Rebuild requires
+explicit data-deletion confirmation and does not remove S3 or Control data.
+Machine-specific addresses, mount checks and S3 credential paths are external configuration.
+
 Development-only S3: [`dev/deploy/rustfs`](../dev/deploy/rustfs/README.md) starts
 a temporary RustFS container on the physical Vagrant host (S3 :19000, console
 :19001), initializes `runtime-snapshots`, and validates it with the Go AWS SDK.

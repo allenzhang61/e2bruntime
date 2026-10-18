@@ -1,0 +1,19 @@
+services:
+  api:
+    environment:
+      FILESYSTEM_ONLY_CHECKPOINT: "true"
+    volumes:
+      - /opt/e2b-runtime/custom/api:/api:ro
+  orchestrator:
+    environment:
+      FILESYSTEM_ONLY_CHECKPOINT: "true"
+      ORCHESTRATOR_BINARY: /opt/e2b-runtime/custom/orchestrator
+    volumes:
+      - /opt/e2b-runtime/custom/orchestrator-launch.sh:/opt/e2b/scripts/orchestrator-launch.sh:ro
+  db-migrator:
+    volumes:
+      - /opt/e2b-runtime/custom/db-migrator:/migrator:ro
+  dashboard:
+    environment:
+      HOSTNAME: 127.0.0.1
+      PUBLIC_SANDBOX_URL: ${PUBLIC_SANDBOX_URL:-http://127.0.0.1:3002}

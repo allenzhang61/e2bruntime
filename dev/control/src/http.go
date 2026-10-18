@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -32,7 +31,7 @@ func bindJSON(c *gin.Context, target any, maxBytes int64, message string) bool {
 	return true
 }
 
-// handler registers native Gin routes while keeping the loopback-only access policy.
+// handler defaults to loopback access; additional exact authorities are opt-in.
 func (s *server) handler() *gin.Engine {
 	router := gin.New()
 	router.SetHTMLTemplate(template.Must(template.ParseFS(pages, "index.html", "debug.html", "backups.html", "logic_instances.html", "logic_backups.html", "refresh.html", "header.html")))
@@ -43,20 +42,26 @@ func (s *server) handler() *gin.Engine {
 	router.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) {
 		log.Print("HTTP handler panic")
 		apiError(c, http.StatusInternalServerError, "internal server error")
-	}), controlAccess)
+	}), s.controlAccess)
 	router.NoRoute(func(c *gin.Context) { apiError(c, http.StatusNotFound, "not found") })
 	router.GET("/api/debug/actions", func(c *gin.Context) { c.JSON(http.StatusOK, debugActions) })
 	router.POST("/api/debug/:action", s.debugOperation)
-	router.GET("/debug", func(c *gin.Context) { c.HTML(http.StatusOK, "debug.html", gin.H{"ActiveTab": "debug"}) })
+	router.GET("/debug", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "debug.html", gin.H{"ActiveTab": "debug", "Runtimes": s.cfg.Runtimes})
+	})
 	router.GET("/backups", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "backups.html", gin.H{"ActiveTab": "backups", "Refresh": true})
+		c.HTML(http.StatusOK, "backups.html", gin.H{"ActiveTab": "backups", "Refresh": true, "Runtimes": s.cfg.Runtimes})
 	})
 	router.GET("/api/backups", s.listBackupServices)
 	router.POST("/api/backups/config", s.configureBackupService)
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	router.GET("/", func(c *gin.Context) {
 		view := c.Query("view")
-		if view != "" && view != "runtime1" && view != "runtime2" {
+		known := view == ""
+		for _, rt := range s.cfg.Runtimes {
+			known = known || view == rt.Name
+		}
+		if !known {
 			apiError(c, http.StatusBadRequest, "unknown Runtime view")
 			return
 		}
@@ -64,7 +69,7 @@ func (s *server) handler() *gin.Engine {
 		if active == "" {
 			active = "overview"
 		}
-		c.HTML(http.StatusOK, "index.html", gin.H{"ActiveTab": active, "View": view, "Refresh": view == ""})
+		c.HTML(http.StatusOK, "index.html", gin.H{"ActiveTab": active, "View": view, "Refresh": view == "", "Runtimes": s.cfg.Runtimes})
 	})
 	router.GET("/api/logics", s.listLogics)
 	router.GET("/logics/:logic_id/instances", func(c *gin.Context) {
@@ -73,7 +78,7 @@ func (s *server) handler() *gin.Engine {
 			apiError(c, http.StatusBadRequest, "invalid Logic ID")
 			return
 		}
-		c.HTML(http.StatusOK, "logic_instances.html", gin.H{"LogicID": id})
+		c.HTML(http.StatusOK, "logic_instances.html", gin.H{"LogicID": id, "Runtimes": s.cfg.Runtimes})
 	})
 	router.GET("/logics/:logic_id/backups", func(c *gin.Context) {
 		id := c.Param("logic_id")
@@ -81,7 +86,7 @@ func (s *server) handler() *gin.Engine {
 			apiError(c, http.StatusBadRequest, "invalid Logic ID")
 			return
 		}
-		c.HTML(http.StatusOK, "logic_backups.html", gin.H{"LogicID": id})
+		c.HTML(http.StatusOK, "logic_backups.html", gin.H{"LogicID": id, "Runtimes": s.cfg.Runtimes})
 	})
 	router.GET("/api/jobs", s.listJobs)
 	router.POST("/api/switch", s.switchRuntime)
@@ -91,18 +96,28 @@ func (s *server) handler() *gin.Engine {
 	return router
 }
 
-func controlAccess(c *gin.Context) {
+func (s *server) controlAccess(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
 	r := c.Request
-	host, _, _ := strings.Cut(r.Host, ":")
-	if host != "127.0.0.1" && host != "localhost" {
-		apiError(c, http.StatusForbidden, "loopback host required")
+	authority, err := url.Parse("http://" + r.Host)
+	allowed := err == nil && authority.User == nil && authority.Path == "" && authority.RawQuery == "" && authority.Fragment == "" &&
+		(authority.Hostname() == "127.0.0.1" || authority.Hostname() == "localhost" || authority.Hostname() == "::1")
+	for _, host := range s.cfg.AllowedHosts {
+		allowed = allowed || r.Host == host
+	}
+	if !allowed {
+		apiError(c, http.StatusForbidden, "allowed host required")
 		return
 	}
 	if r.Method == http.MethodPost {
 		origin, err := url.Parse(c.GetHeader("Origin"))
-		if err != nil || (origin.Host != r.Host && !(c.GetHeader("Origin") == "" && c.GetHeader("X-Control-Request") == "1")) {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		sameOrigin := err == nil && origin.Scheme == scheme && origin.Host == r.Host && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == ""
+		if !sameOrigin && !(c.GetHeader("Origin") == "" && c.GetHeader("X-Control-Request") == "1") {
 			apiError(c, http.StatusForbidden, "same-origin request required")
 			return
 		}

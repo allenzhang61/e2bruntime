@@ -9,6 +9,16 @@ export GOTOOLCHAIN := local
 help: ## 展示命令及用途（默认，不执行部署）
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' "$(ROOT)/Makefile"
 
+.PHONY: single-build single-deploy single-control-deploy
+single-build: ## 在 Linux 宿主 Docker 中构建单节点服务，需要 E2BRUNTIME_CONFIG
+	bash "$(ROOT)/single-host/deploy.sh" build
+
+single-deploy: ## 在 Linux 宿主部署一个 Runtime、Control 和备份服务
+	bash "$(ROOT)/single-host/deploy.sh" deploy
+
+single-control-deploy: ## 仅构建更新 Control 与 Web Admin，不重启 Runtime
+	bash "$(ROOT)/single-host/deploy.sh" control-deploy
+
 # two-vm/{provision,compile,install,install-vm,runtime}.sh 是入口脚本自动传输/调用的辅助脚本。
 # RUNTIME_SSH_HOST 可覆盖默认 SSH 目标。reset-all-data 和 s3-down 会删除数据。
 
@@ -56,4 +66,3 @@ s3-down: ## 停止 RustFS（tmpfs 中所有备份数据会丢失）
 
 reset-all-data: ## 删除两台 VM、S3 备份和 Control 数据，并从零重建
 	bash "$(ROOT)/reset.sh" --all-data
-

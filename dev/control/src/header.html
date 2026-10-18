@@ -3,8 +3,7 @@
 <h1>Sandbox Logic Control</h1><p class="muted">Logic ID 在恢复后保持不变；Instance ID 由 Runtime 分配。切换只修改 S3 备份归属；恢复在归属机器上使用最新完整文件系统备份冷启动，不恢复内存或运行中的进程。</p>
 <header class="page-toolbar"><nav class="page-navigation" aria-label="页面导航"><div class="view-tabs" aria-label="视图切换">
 <a href="/" {{if eq .ActiveTab "overview"}}aria-current="page"{{end}}>统一视图</a>
-<a href="/?view=runtime1" {{if eq .ActiveTab "runtime1"}}aria-current="page"{{end}}>Runtime 1 Web Admin</a>
-<a href="/?view=runtime2" {{if eq .ActiveTab "runtime2"}}aria-current="page"{{end}}>Runtime 2 Web Admin</a>
+{{range .Runtimes}}<a href="/?view={{.Name}}" {{if eq $.ActiveTab .Name}}aria-current="page"{{end}}>{{.Name}} Web Admin</a>{{end}}
 <a href="/debug" {{if eq .ActiveTab "debug"}}aria-current="page"{{end}}>Runtime Debug</a>
 <a href="/backups" {{if eq .ActiveTab "backups"}}aria-current="page"{{end}}>备份状态</a>
 </div></nav>
