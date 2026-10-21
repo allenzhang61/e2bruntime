@@ -3,7 +3,7 @@ set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control=$(cd "$here/.." && pwd)
 remote=${RUNTIME_SSH_HOST:-zyl@192.168.1.211}
-work=/home/zyl/e2bruntime/dev/control/web-admin
+work=/home/zyl/e2bruntime/dev/web-admin/build
 bundle=$(mktemp -d)
 trap 'rm -rf "$bundle"' EXIT
 git clone -q --depth 1 --branch v0.2.1 https://github.com/e2b-dev/dashboard.git "$bundle/source"

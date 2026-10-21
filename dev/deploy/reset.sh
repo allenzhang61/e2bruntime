@@ -3,6 +3,8 @@
 set -euo pipefail
 [[ ${1:-} == --all-data ]] || { echo 'Usage: reset.sh --all-data (deletes both Runtime VMs, all S3 backups and controller records)'; exit 2; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+sandbox=${SI_SANDBOX_DIR:-"$(cd "$here/../../.." && pwd)/si-sandbox"}
+[[ -f "$sandbox/src/cmd/control/main.go" ]] || { echo "Set SI_SANDBOX_DIR before resetting the environment" >&2; exit 2; }
 remote=${RUNTIME_SSH_HOST:-zyl@192.168.1.211}
 socket="${TMPDIR:-/tmp}/e2b-logic-control-${UID}.sock"
 ssh -S "$socket" -O exit "$remote" >/dev/null 2>&1 || true
@@ -24,9 +26,9 @@ HOST
 "$here/two-vm/build.sh" install
 "$here/rustfs/deploy.sh" up
 BACKUP_SEED_DEMO=0 "$here/../backup/scripts/deploy.sh" up
-"$here/../control/scripts/web-deploy.sh"
-"$here/../control/scripts/deploy.sh"
-"$here/../control/scripts/connect.sh"
+"$here/../web-admin/scripts/web-deploy.sh"
+"$sandbox/deploy/control/scripts/deploy.sh"
+"$sandbox/deploy/control/scripts/connect.sh"
 "$here/two-vm/deploy.sh" verify
 RUSTFS_VERIFY_EMPTY=1 "$here/rustfs/deploy.sh" verify
 echo 'Rebuild complete; no demo sandboxes created.'

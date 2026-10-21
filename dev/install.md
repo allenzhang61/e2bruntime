@@ -10,7 +10,7 @@
 |---|---|---|
 | `dev/deploy` | 创建 VM、编译安装 Runtime、启动 RustFS | `make -C dev/deploy help` |
 | `dev/backup` | 两台 VM 的定时备份、S3 导出与节点恢复 API | `make -C dev/backup help` |
-| `dev/control` | 统一 Gin 控制服务、Runtime Web Admin 部署与端到端测试 | `make -C dev/control help` |
+| `dev/web-admin` | Runtime Web Admin 资源与部署（Control 已迁入 si-sandbox） | `make -C dev/web-admin help` |
 
 本地执行部署脚本；编译 Runtime 和构建 Dashboard 镜像在 Linux 宿主 Docker 中完成。备份 Go 程序和 Control Go 程序在本地交叉编译。宿主不需要手工克隆整个仓库，脚本会上传必要文件。
 
@@ -53,7 +53,7 @@ cat /sys/module/kvm_amd/parameters/nested   # AMD
 | RustFS 部署目录 | `/home/zyl/e2bruntime/dev/deploy/rustfs` | RustFS 入口支持 `RUSTFS_REMOTE_DIR`；Web Admin/Control 读取的路径也要调整 |
 | 备份读取 S3 配置 | 宿主 RustFS 目录的 `.env` | `backup/scripts/install-host.sh` 支持 `RUSTFS_ENV_FILE` |
 | RustFS 绑定地址与 endpoint | `192.168.1.211:19000` | 提前创建本地 `dev/deploy/rustfs/.env`，修改绑定 IP 和 endpoint |
-| Control 及辅助工作目录 | `/home/zyl/e2bruntime/dev/control` 等 | 修改 `control/scripts`、`backup/scripts` 中对应固定路径 |
+| Control 及辅助工作目录 | `/home/zyl/si-sandbox/deploy/control` 等 | 修改 si-sandbox `deploy/control/scripts`、Runtime `backup/scripts` 中对应固定路径 |
 | SSH 私有隧道用户 | `User=zyl` | 修改 `control/scripts/install-host.sh` 生成的 systemd 用户 |
 
 在仓库根目录定位所有需要适配的位置：
@@ -130,7 +130,7 @@ make -C dev/backup status
 ### 4.5 部署 Runtime Web Admin
 
 ```bash
-make -C dev/control web-deploy
+make -C dev/web-admin deploy
 ```
 
 构建固定版本官方 Dashboard 并应用 `assets/web/dashboard.patch`，安装到两台 VM；同时启动 `e2b-backup-admin.service`，提供受认证的节点备份管理 API（VM 回环 3012）。补丁、脚本及说明已合入 Control，不再有 `dev/admin` 目录。
@@ -140,8 +140,8 @@ Dashboard 从 VM 的 `sdk.env` 加载服务端 key。此时不需要把 key 手�
 ### 4.6 部署 Control 并建立本地访问
 
 ```bash
-make -C dev/control deploy
-make -C dev/control connect
+make -C ../si-sandbox control-dual-vm-deploy
+make -C ../si-sandbox control-connect
 curl -fsS http://localhost:13021/health
 ```
 
@@ -167,13 +167,13 @@ Control 部署脚本从两台 VM 收集 API key，并将其与 RustFS 配置保�
 
 ```bash
 make -C dev/backup test
-make -C dev/control test
-make -C dev/control e2e
+make -C ../si-sandbox control-test
+make -C ../si-sandbox control-e2e
 ```
 
 `e2e` 使用真实 HTTP 服务：创建实例、写入并读回文件、执行独立自动休眠/删除计划、休眠/唤醒、等待 S3 备份、切换归属、跨节点恢复、删除后再次恢复，以及重复恢复拦截。测试只清理自己创建的物理实例，其独立 Logic ID 的备份和操作历史保留便于分析；运行后不是完全空环境。
 
-运行参数、输出报告位置见 [Control 端到端测试](control/doc/e2e.md)。`make -C dev/control debug-test` 是另一套 Debug API 实测；`make -C dev/backup flow` 是带最终文件系统备份的休眠流程验证；`restore` 会安装并测试 Runtime 2，仅在了解其目标环境操作后单独运行。
+运行参数、输出报告位置见 [Control 端到端测试](../../si-sandbox/docs/control/e2e.md)。`make -C ../si-sandbox control-debug-test` 是另一套 Debug API 实测；`make -C dev/backup flow` 是带最终文件系统备份的休眠流程验证；`restore` 会安装并测试 Runtime 2，仅在了解其目标环境操作后单独运行。
 
 ## 6. 日常修改、故障排查与重建
 
@@ -181,8 +181,8 @@ make -C dev/control e2e
 |---|---|
 | 修改 Runtime 源码 | `make -C dev/deploy build`，然后 `make -C dev/deploy install` |
 | 修改备份代码 | `BACKUP_SEED_DEMO=0 make -C dev/backup deploy` |
-| 修改 Control 页面或 API | `make -C dev/control deploy` |
-| 修改 Dashboard 补丁 | `make -C dev/control web-deploy` |
+| 修改 Control 页面或 API | `make -C ../si-sandbox control-dual-vm-deploy` |
+| 修改 Dashboard 补丁 | `make -C dev/web-admin deploy` |
 | 修改 VM provisioning | `make -C dev/deploy vm-provision` |
 | 查看备份日志 | `make -C dev/backup logs` |
 | 停止并禁用周期备份服务 | `make -C dev/backup stop` |
@@ -209,16 +209,16 @@ make -C dev/deploy reset-all-data
 
 该命令会删除两台 VM、全部 S3 备份和 Control 数据卷，然后按上述顺序重新部署。不适合作为新机器的首次安装入口：它假定旧 VM、容器、数据卷和 systemd 服务已存在。新环境按第 4 节逐步安装。
 
-更多说明：[VM 与 Runtime](deploy/two-vm/README.md)、[RustFS](deploy/rustfs/README.md)、[备份服务](backup/doc/README.md)、[Control](control/doc/README.md)、[Runtime Web Admin](control/doc/web-admin.md)。
+更多说明：[VM 与 Runtime](deploy/two-vm/README.md)、[RustFS](deploy/rustfs/README.md)、[备份服务](backup/doc/README.md)、[Control](../../si-sandbox/docs/control/README.md)、[Runtime Web Admin](web-admin/doc/web-admin.md)。
 
 ## 7. 部署实测反馈（2026-10-11）
 
-在 `zyl@192.168.1.211` 从无 VM 状态部署两台 Runtime，安装当前 fork、RustFS、两台备份 worker、Web Admin 和 Control。健康检查、两台 smoke、S3 1 MiB 对象上传/下载/SHA-256 校验、backup/control 单元测试与 race 检查、两台 Debug API 实测均通过。统一视图 E2E 全部 12 阶段通过，耗时 208.29 秒；测试实例清理后，两节点观测实例数为 0。Logic ID `workspace-803nax` 的备份和操作历史保留，结果文件为本地 `dev/control/test/out/deployment-validation-20261011/unified-view.json`。
+在 `zyl@192.168.1.211` 从无 VM 状态部署两台 Runtime，安装当前 fork、RustFS、两台备份 worker、Web Admin 和 Control。健康检查、两台 smoke、S3 1 MiB 对象上传/下载/SHA-256 校验、backup/control 单元测试与 race 检查、两台 Debug API 实测均通过。统一视图 E2E 全部 12 阶段通过，耗时 208.29 秒；测试实例清理后，两节点观测实例数为 0。Logic ID `workspace-803nax` 的备份和操作历史保留，结果文件为本地 `../si-sandbox/test/control/out/deployment-validation-20261011/unified-view.json`。
 
 这次遇到的问题及修复：
 
 - 源码安装与 Web Admin 并行操作同一 Compose 项目，Dashboard 重建导致安装报 `No such container`。顺序重装后通过；安装脚本新增共享宿主锁，在 VM 文件上传前拒绝冲突部署，避免共享 `/tmp` 输入被覆盖。
 - 构建源码包不含 `.git` 和 `.last_used_env`，原先调用包 Makefile 会输出缺文件和 `not a git repository`，但编译仍成功。开发构建现直接调用 Go，显式携带本地 HEAD commit，并从同源迁移目录提取 API schema 版本。commit 标识 HEAD；未提交的工作区改动仍会上传构建。
-- 双 VM 文档仍引用已移除的 `dev/test`，已更新为 `dev/control` 下的 Debug 与统一视图测试入口。
+- 双 VM 文档仍引用已移除的 `dev/test`，已更新为 `si-sandbox` 下的 Debug 与统一视图测试入口。
 
 Vagrant 的 `Unrecognized arguments: libvirt_ip_command` 是此次使用的 vagrant-libvirt/fog 警告；创建、SSH 和全部测试通过，本次没有为消除警告修改插件或 VM 网络。

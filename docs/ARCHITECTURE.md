@@ -867,15 +867,15 @@ deletion owns a separate hold until artifact cleanup returns.
 ## Deployment topology
 
 The optional `dev/deploy/single-host` deployment runs one Embed Runtime directly
-on an x86_64 Linux host, with a rootless Logic Control container and the existing
-backup worker/admin systemd services. Host-side Git checks out the requested revision;
+on an x86_64 Linux host with the existing backup worker/admin systemd services.
+The rootless Logic Control container is deployed separately from si-sandbox. Host-side Git checks out the requested revision;
 temporary Docker containers compile the services without receiving SSH credentials.
 Control accepts a configurable list of `runtimeN` nodes, with dynamic navigation.
 Loopback access remains the default; additional exact Host authorities and a LAN
 listener are explicit operator configuration, not authentication. POST requests
 retain same-origin checks. An optional Nginx Web Admin proxy uses configured
-`frame-ancestors` and retains Dashboard team-key login. Single-host component updates
-can rebuild Control without rebuilding or restarting the Runtime. Rebuild requires
+`frame-ancestors` and retains Dashboard team-key login. Control updates use their own source and deployment entry point without
+rebuilding or restarting the Runtime. Rebuild requires
 explicit data-deletion confirmation and does not remove S3 or Control data.
 Machine-specific addresses, mount checks and S3 credential paths are external configuration.
 
@@ -1010,9 +1010,9 @@ The optional `dev/backup/scripts/flow.sh` runs `TestSandboxFlowLive` in runtime1
 
 ### Development: Dashboard S3 snapshot inventory
 
-`dev/control/assets/web/dashboard.patch` extends the official Dashboard v0.2.1 (commit f031ba7ec20910d5b09582d6531d7d220cf30c7f): the instance table has an S3 Snapshots count linking to `/snapshots/{sandboxId}`, with backup timestamp, filesystem type, bytes and S3 object key in newest-first order. Counts and lists refresh every 15 seconds. These count retained filesystem archives only, excluding shared layers and Runtime-local memory/hibernation state.
+`dev/web-admin/assets/web/dashboard.patch` extends the official Dashboard v0.2.1 (commit f031ba7ec20910d5b09582d6531d7d220cf30c7f): the instance table has an S3 Snapshots count linking to `/snapshots/{sandboxId}`, with backup timestamp, filesystem type, bytes and S3 object key in newest-first order. Counts and lists refresh every 15 seconds. These count retained filesystem archives only, excluding shared layers and Runtime-local memory/hibernation state.
 
-The Dashboard server's `/api/backups` route reads its existing httpOnly team-key session and proxies to `e2b-backup admin` on VM loopback port 3012. The node-local service accepts only the configured team's exact key and reads only its node's S3 prefix. RustFS keys stay in the existing root-only backup configuration; they are never sent to the browser. The inventory endpoints are read-only; the explicitly requested takeover/import endpoints now mutate ownership, local build storage and target control-plane registration as described below. This development setup is scoped to runtime1 and its existing single-team backup worker. `dev/control/scripts/web-deploy.sh` builds the patched frontend and installs the query service; `compose.dashboard.yaml` selects the local image and is included by `runtime.sh`. The Runtime API and sandboxes are unaffected by Dashboard image replacement.
+The Dashboard server's `/api/backups` route reads its existing httpOnly team-key session and proxies to `e2b-backup admin` on VM loopback port 3012. The node-local service accepts only the configured team's exact key and reads only its node's S3 prefix. RustFS keys stay in the existing root-only backup configuration; they are never sent to the browser. The inventory endpoints are read-only; the explicitly requested takeover/import endpoints now mutate ownership, local build storage and target control-plane registration as described below. This development setup is scoped to runtime1 and its existing single-team backup worker. `dev/web-admin/scripts/web-deploy.sh` builds the patched frontend and installs the query service; `compose.dashboard.yaml` selects the local image and is included by `runtime.sh`. The Runtime API and sandboxes are unaffected by Dashboard image replacement.
 
 ### Development: versioned backup Metadata sidecars
 
@@ -1045,7 +1045,13 @@ protection against accidental duplicate creation.
 
 ### Development: standalone Logic Control
 
-`dev/control` contains module/configuration files and Dockerfile, with deployment/connect scripts in `dev/control/scripts`; its Gin HTTP server, tests and embedded HTML are in `dev/control/src`, built as `./src` from the control module root. It supersedes Dashboard export/import UI: those pages, buttons and
+Control is maintained in the separate `si-sandbox` repository: `src/control` contains
+its Gin server, embedded pages, HTTP client and unit tests; `src/cmd/control` is the
+entry point and `test/control` holds opt-in live tests. `deploy/control` contains
+packaging and dual-VM SSH adapters. Control only uses Runtime HTTP, node admin HTTP
+and S3; it has no source/module dependency on this repository. Runtime-specific
+Dashboard assets and installers live in `dev/web-admin`; the former `dev/control`
+directory is removed. It supersedes Dashboard export/import UI: those pages, buttons and
 Dashboard proxy route are removed; the authenticated node-local backup endpoints
 remain as internal execution APIs. A separate Go HTTP service on 211's Docker
 host uses loopback 13021, persistent private SSH API forwards and server-only
@@ -1092,7 +1098,7 @@ forwards remain the access boundary. This avoids cross-site login cookies when
 embedding runtime1/2 and does not copy team keys to the browser.
 
 Host SSH forwards 14001/14011 reach each VM's loopback Dashboard; Mac 13001/13011
-now target those host forwards. `dev/control/scripts/connect.sh` keeps the controller,
+now target those host forwards. `si-sandbox/deploy/control/scripts/connect.sh` keeps the controller,
 Dashboard and existing sandbox-proxy forwards together in a managed SSH session.
 When a target has previously registered the immutable snapshot build, the importer
 reuses its existing private team-owned template only when it is active. A soft-deleted snapshot template remains a tombstone: the importer registers a new private recovery env and assigns the verified team-owned immutable build to it. Creation pins the build UUID explicitly, preventing default-tag drift. Registration verification requires an active env and a ready build.
@@ -1103,7 +1109,7 @@ reuses its existing private team-owned template only when it is active. A soft-d
 
 ### Control Runtime Debug API
 
-The Gin controller serves `/debug`, `GET /api/debug/actions` and allowlisted `POST /api/debug/:action` routes for Runtime selection, lifecycle operations, file/command APIs and filesystem snapshots. All routes retain the existing loopback and Origin checks. The shared standard-library Runtime client moved from dev/test to `dev/control/src/clientgo`; The obsolete dev/test tests have been removed; dev/control/test exercises the live Control API without receiving Runtime or S3 keys. Keys and guest tokens remain server-side and are removed from returned results. Host-to-VM systemd SSH tunnels also forward 14013/14023 to each guest's client proxy on 3002; configuration uses RUNTIME1_PROXY_URL/RUNTIME2_PROXY_URL. Debug calls report elapsed milliseconds. Hibernate and filesystem-snapshot debug calls use the Runtime APIs directly and do not invoke the S3 backup worker; the labels make this explicit.
+The Gin controller serves `/debug`, `GET /api/debug/actions` and allowlisted `POST /api/debug/:action` routes for Runtime selection, lifecycle operations, file/command APIs and filesystem snapshots. All routes retain the existing loopback and Origin checks. The shared standard-library Runtime client moved from dev/test to `si-sandbox/src/control/clientgo`; The obsolete dev/test tests have been removed; si-sandbox/test/control exercises the live Control API without receiving Runtime or S3 keys. Keys and guest tokens remain server-side and are removed from returned results. Host-to-VM systemd SSH tunnels also forward 14013/14023 to each guest's client proxy on 3002; configuration uses RUNTIME1_PROXY_URL/RUNTIME2_PROXY_URL. Debug calls report elapsed milliseconds. Hibernate and filesystem-snapshot debug calls use the Runtime APIs directly and do not invoke the S3 backup worker; the labels make this explicit.
 
 Control's HTTP layer uses Gin JSON binding and validator tags, rejects unknown JSON fields, renders embedded pages with Gin HTML templates, and returns consistent JSON error objects through AbortWithStatusJSON. The browser reads the error field. Existing per-route body limits, loopback/Origin guards, HTTP timeouts and graceful shutdown remain in effect.
 
@@ -1133,10 +1139,22 @@ Control overview, Runtime iframe views, Debug and backup status share one Gin HT
 
 Backup status now allows authenticated updates to interval (10–86400 seconds) and per-instance retention (1–1000). Control forwards its validated Gin POST /api/backups/config to node POST /settings. Each node atomically persists only these fields in root-only backup/settings.json; configInit loads it on startup and the sequential worker re-reads it between cycles (one-second idle poll), deriving the next cycle from the last cycle start. Active cycles finish before adopting new settings; stopped services remain stopped. GET /schedule reads the saved configuration independently of worker health. Lower retention takes effect during the next successful backup, with shared layers retained.
 
-The opt-in Go suite in dev/control/test exercises unified inventory, independent sleep/delete plans and execution, memory pause/wake, periodic archive/sidecar publication, ownership switching, cross-node cold restore, target uniqueness, delete/re-restore of a same-node snapshot, and switch-back binding. It records end-to-end timings and deletes only the physical instances created by that run; its isolated workspace backups and controller history remain for diagnosis. It tests the HTTP/backend chain used by the UI, not browser DOM interactions.
+The opt-in Go suite in si-sandbox/test/control exercises unified inventory, independent sleep/delete plans and execution, memory pause/wake, periodic archive/sidecar publication, ownership switching, cross-node cold restore, target uniqueness, delete/re-restore of a same-node snapshot, and switch-back binding. It records end-to-end timings and deletes only the physical instances created by that run; its isolated workspace backups and controller history remain for diagnosis. It tests the HTTP/backend chain used by the UI, not browser DOM interactions.
 
 Editable backup settings also persist enabled (default true for legacy settings). Disabling suppresses new periodic instances/cycles without interrupting the active backup; the worker process remains alive and reports disabled with no next cycle. Re-enabling triggers a cycle on the next idle poll. Settings changes do not start a systemd-stopped worker; enabled configuration and process status remain separate. The Control status page exposes the switch and the unified inventory labels disabled backups explicitly.
 
 The development backup module keeps Go service and test sources in `dev/backup/src`, shell entrypoints in `dev/backup/scripts`, and documentation in `dev/backup/doc`. Its go.mod/go.sum, configuration example and systemd unit remain at the module root. Build entrypoints target `./src`; guest installation paths are unchanged.
 
-Runtime Web Admin deployment is maintained under Control: `dev/control/assets/web` holds the pinned Dashboard patch and node-admin systemd unit; `scripts/web-deploy.sh`, `web-host.sh`, and `web-guest.sh` build/install them. Generated host bundles use `dev/control/web-admin`, separate from the controller build context. The former dev/admin directory is removed; node API implementation remains in dev/backup/src and VM service paths are unchanged.
+Runtime Web Admin deployment remains in this repository: `dev/web-admin/assets/web` holds the pinned Dashboard patch and node-admin systemd unit; `scripts/web-deploy.sh`, `web-host.sh`, and `web-guest.sh` build/install them. Generated host bundles use `dev/web-admin/build`, separate from the controller build context. The former dev/admin directory is removed; node API implementation remains in dev/backup/src and VM service paths are unchanged.
+
+### Single-host deployment after Control extraction
+
+`dev/deploy/single-host` builds and deploys Runtime API, orchestrator, migrator,
+Dashboard proxy and node backup services only. Web Admin Nginx templates and the
+backup admin systemd unit are under `dev/web-admin/assets`. The Runtime workflow
+preserves configured Compose credentials and does not touch Control containers,
+configuration or data. `home-server/services/e2bruntime` stages the selected local
+Runtime checkout and invokes this entry point, including uncommitted migration
+changes. Control is deployed independently from `si-sandbox` through
+`home-server/services/si-sandbox`, retaining the existing `e2b-logic-control`
+container, `/opt/e2b-control/control.env` and `e2b-control-single-data` volume.

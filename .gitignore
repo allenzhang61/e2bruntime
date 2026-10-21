@@ -24,4 +24,4 @@ dev/test/out/
 # S3 restore validation reports
 dev/backup/out/
 
-dev/control/test/out/
+dev/web-admin/build/
